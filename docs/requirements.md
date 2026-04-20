@@ -210,6 +210,34 @@
   - 远程沙箱模式（Docker 容器隔离）
   - 云端 IDE 模式（集成 Web IDE）
 
+## 3. 技术栈
+
+### 后端
+- Python 3.12 + FastAPI
+- SQLAlchemy（ORM）
+- asyncio（异步原生）
+- SQLite（开发）/ PostgreSQL + pgvector（生产）
+- Click + Rich（CLI 交互）
+
+### 前端
+- React + Next.js
+- TypeScript
+- Tailwind CSS + shadcn/ui
+- WebSocket（实时状态推送）
+
+### 部署
+- Docker Compose（App + DB）
+- 一键部署脚本（支持宝塔面板等）
+  - 自动安装依赖、配置数据库、启动服务
+  - 提供 install.sh 一键脚本
+  - 宝塔面板集成：Docker 应用模板
+
+### 分阶段计划
+- **MVP**：CLI（Rich 终端界面）+ FastAPI 后端
+- **第二阶段**：React Web 管理界面（配置管理 + 可观测性面板）
+
+## 4. 非功能需求
+
 - 支持多模型（OpenAI、Claude、本地模型，可插拔）
 - 每个 Agent 支持配置独立的模型
 - 每个 Agent 可配备多个 Skill
