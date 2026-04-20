@@ -29,6 +29,11 @@
   - 子 Agent 不能给别的 Agent 分配任务，只有 Leader 能分配
   - 子 Agent 之间只能"请求协作"，不能"命令"
   - Leader 负责冲突仲裁
+- **技术实现 — 消息总线 + Leader 异步旁听**：
+  - 子 Agent 间消息通过总线直达，不经 Leader 中转
+  - Leader 使用独立的异步队列旁听所有消息，不阻塞主消息投递
+  - 消息流向：Agent A → Bus → Agent B（直达）+ Leader 队列（旁听，只读）
+  - 区别于中转模式：Leader 不是必经之路，不能拦截/修改消息，只能被动监听
 - **参考产品**：CrewAI + Google A2A 协议
 
 ### 2.3 记忆系统
@@ -45,6 +50,12 @@
   - **Layer 3: 向量检索层** — 语义搜索历史经验
     - 知识条目 embedding
     - 支持相似度检索（"之前类似问题怎么解决的？"）
+    - **触发方式：Agent 主动调用**（非自动触发）
+      - 向量检索作为 `memory_search` Tool 注册，Agent 在 Skill 中声明启用
+      - Agent 自主判断是否需要参考历史经验，需要时才调用
+      - 避免每次都搜导致浪费 token 和上下文膨胀
+      - 类似人类：只有遇到不确定的问题时才去翻笔记
+    - Skill 中启用方式：`tools: [file_read, memory_search]`
 - **数据库引擎可切换**：
   - 开发/轻量场景 → SQLite（零依赖，开箱即用）
   - 生产场景 → PostgreSQL + pgvector（一栈搞定结构化 + 向量检索 + 全文搜索）
@@ -104,10 +115,13 @@
 ### 2.7 容错机制
 
 - **Checkpoint 机制**：每步操作落盘，失败可续，内容不丢
-  - 开始前 → checkpoint 记录"正在做 X"
-  - 执行中 → 中间结果实时写入数据库
-  - 完成后 → checkpoint 更新为"X 已完成"
-  - 失败了 → checkpoint 标记"X 失败，原因 Y"
+  - **粒度：业务步骤为主 + Tool 执行为辅**
+    - Level 1（默认开启）：业务步骤 Checkpoint — 用户能理解的最小有意义单元
+      - 如 "搜索资料" 完成、"写代码" 完成 → 保存结果摘要和产出物路径
+    - Level 2（可选，`debug_mode=true` 开启）：Tool 执行 Checkpoint — 细粒度调试
+      - 如 `file_read("./main.py")` → 保存读取结果，`execute("npm test")` → 保存执行输出
+  - Checkpoint 记录内容：step、status、result_summary、artifacts、时间、token_usage
+  - 状态流转：开始前 → "正在做 X" / 完成后 → "X 已完成" / 失败 → "X 失败，原因 Y"
 - **各故障场景策略**：
   - LLM API 调用失败 → 指数退避重试（1s→2s→4s→8s，最多3次）→ 切换备用模型（fallback_model）→ 仍失败上报用户
   - Agent 输出异常 → Leader 把之前输出 + 问题描述发给 Agent 重新生成
@@ -147,6 +161,17 @@
 
 - **单聊模式**：用户可选择任意 Agent 直接对话，如"找 Researcher 聊聊技术方案"
 - **圆桌模式**：多个 Agent 自由讨论，没有 Leader 编排，所有参与 Agent 平等发言
+- **圆桌收敛策略**（无 Leader 时讨论如何结束）：
+  - 轮数限制（默认）：配置 `max_rounds=5`，每轮所有 Agent 发言一次，到轮数自动结束
+  - 共识检测（可选）：每轮结束后用 LLM 判断是否达成共识，达成则提前结束
+  - 用户手动（默认开启）：每轮结束后展示给用户，可继续/结束/追加问题
+  - 配置示例：
+    ```yaml
+    roundtable:
+      max_rounds: 5
+      consensus_check: false
+      user_control: true
+    ```
 - **模式转换**：讨论出成果后，可以把圆桌结论交给 Leader 转为正式任务执行
 
 ### 2.10 用户体系

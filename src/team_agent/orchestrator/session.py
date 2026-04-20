@@ -256,12 +256,52 @@ class SessionManager:
 
         return await agent.chat(message)
 
-    async def roundtable(self, session_id: str, agent_names: list[str], message: str) -> dict[str, str]:
-        """圆桌讨论模式"""
-        results = {}
-        for name in agent_names:
-            agent = self._agents.get(name)
-            if agent:
-                result = await self.chat_with_agent(session_id, name, message)
-                results[name] = result
-        return results
+    async def roundtable(
+        self,
+        session_id: str,
+        agent_names: list[str],
+        message: str,
+        max_rounds: int = 5,
+        consensus_check: bool = False,
+    ) -> dict[str, list[str]]:
+        """圆桌讨论模式 — 支持收敛策略
+
+        Args:
+            session_id: 会话 ID
+            agent_names: 参与讨论的 Agent 列表
+            message: 讨论主题
+            max_rounds: 最大讨论轮数
+            consensus_check: 是否自动检测共识
+        """
+        all_results: dict[str, list[str]] = {name: [] for name in agent_names}
+        current_topic = message
+
+        for round_num in range(1, max_rounds + 1):
+            round_results = {}
+            for name in agent_names:
+                agent = self._agents.get(name)
+                if agent:
+                    result = await self.chat_with_agent(session_id, name, current_topic)
+                    round_results[name] = result
+                    all_results[name].append(result)
+
+            # 共识检测（可选）
+            if consensus_check and round_num < max_rounds:
+                consensus_prompt = f"讨论主题: {message}\n\n各方观点:\n"
+                for name, result in round_results.items():
+                    consensus_prompt += f"\n{name}: {result[:200]}\n"
+                consensus_prompt += "\n各方观点是否已经收敛？是否还有关键分歧？只回答 YES 或 NO。"
+
+                consensus = await self.chat_with_agent(session_id, "coordinator", consensus_prompt)
+                if "YES" in consensus.upper():
+                    break
+
+            # 为下一轮构造上下文
+            if round_num < max_rounds:
+                next_topic_parts = [f"第 {round_num + 1} 轮讨论，主题: {message}\n\n上一轮观点:"]
+                for name, result in round_results.items():
+                    next_topic_parts.append(f"{name}: {result[:300]}")
+                next_topic_parts.append("\n请基于以上观点继续讨论，提出新见解或补充。")
+                current_topic = "\n".join(next_topic_parts)
+
+        return all_results

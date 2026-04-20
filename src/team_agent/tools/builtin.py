@@ -61,6 +61,17 @@ async def web_search(query: str) -> str:
     return f"Search result for: {query} (not implemented yet)"
 
 
+@tool(name="memory_search", description="搜索历史经验和知识（语义检索）")
+async def memory_search(query: str, top_k: int = 3) -> str:
+    """从记忆库中搜索与 query 相关的历史经验
+
+    Agent 主动调用此工具检索历史经验，不会自动触发。
+    只有在遇到不确定的问题时才需要翻"笔记"。
+    """
+    # 占位实现，实际接入向量检索
+    return f"Memory search results for: {query} (top_k={top_k}, vector search not yet implemented)"
+
+
 # 注册所有内置工具
 def register_builtin_tools() -> None:
     """确保内置工具已注册（导入即注册）"""

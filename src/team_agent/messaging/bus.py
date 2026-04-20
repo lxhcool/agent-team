@@ -16,20 +16,52 @@ MessageHandler = Callable[[Message], Coroutine[Any, Any, None]]
 
 
 class MessageBus:
-    """异步消息总线 — 支持点对点和广播通信"""
+    """异步消息总线 — 支持点对点和广播通信，Leader 异步旁听"""
 
     def __init__(self):
         self._handlers: dict[str, list[MessageHandler]] = defaultdict(list)
         self._type_handlers: dict[MessageType, list[MessageHandler]] = defaultdict(list)
         self._global_handlers: list[MessageHandler] = []
-        self._queue: asyncio.Queue[Message] = asyncio.Queue()
-        self._running = False
         self._leader: str | None = None
         self._history: list[Message] = []
+        # Leader 旁听队列 — 异步消费，不阻塞主消息投递
+        self._leader_queue: asyncio.Queue[Message] = asyncio.Queue()
+        self._leader_consumer_task: asyncio.Task | None = None
 
     def set_leader(self, agent_name: str) -> None:
         """设置 Leader Agent"""
         self._leader = agent_name
+
+    async def start_leader_consumer(self) -> None:
+        """启动 Leader 旁听消费者"""
+        if self._leader_consumer_task is None or self._leader_consumer_task.done():
+            self._leader_consumer_task = asyncio.create_task(self._leader_consume_loop())
+
+    async def stop_leader_consumer(self) -> None:
+        """停止 Leader 旁听消费者"""
+        if self._leader_consumer_task and not self._leader_consumer_task.done():
+            self._leader_consumer_task.cancel()
+            try:
+                await self._leader_consumer_task
+            except asyncio.CancelledError:
+                pass
+
+    async def _leader_consume_loop(self) -> None:
+        """Leader 旁听消费者循环 — 异步处理，不阻塞消息投递"""
+        while True:
+            try:
+                message = await self._leader_queue.get()
+                if self._leader and self._leader in self._handlers:
+                    for handler in self._handlers[self._leader]:
+                        try:
+                            await handler(message)
+                        except Exception as e:
+                            logger.error(f"Leader monitor handler error: {e}")
+                self._leader_queue.task_done()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Leader consumer error: {e}")
 
     def register(self, agent_name: str, handler: MessageHandler) -> None:
         """注册 Agent 的消息处理器"""
@@ -83,19 +115,14 @@ class MessageBus:
             else:
                 logger.warning(f"No handler registered for agent: {message.receiver}")
 
-        # Leader 监听子 Agent 间的对话
+        # Leader 异步旁听子 Agent 间的对话（不阻塞主消息投递）
         if (
             self._leader
             and message.receiver != self._leader
             and message.sender != self._leader
             and not message.is_broadcast()
         ):
-            if self._leader in self._handlers:
-                for handler in self._handlers[self._leader]:
-                    try:
-                        await handler(message)
-                    except Exception as e:
-                        logger.error(f"Leader monitor handler error: {e}")
+            await self._leader_queue.put(message)
 
     async def send_and_wait(
         self,
