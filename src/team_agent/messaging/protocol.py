@@ -10,36 +10,85 @@ from typing import Any
 
 
 class MessageType(str, Enum):
-    """消息类型"""
+    """消息类型
 
-    # 任务相关
-    TASK_ASSIGN = "task_assign"  # Leader 分配任务
-    TASK_ACCEPT = "task_accept"  # Agent 接受任务
-    TASK_REJECT = "task_reject"  # Agent 拒绝任务
-    TASK_COMPLETE = "task_complete"  # Agent 完成任务
-    TASK_FAILED = "task_failed"  # Agent 任务失败
-    TASK_PROGRESS = "task_progress"  # Agent 汇报进度
+    权限分类：
+    - command: 只有 Leader（或被委派的子团队长）能发送
+    - request: 子 Agent 间协作请求，不能命令
+    - inform: 信息传递，无权限限制
+    """
 
-    # 协作相关
-    COLLAB_REQUEST = "collab_request"  # 请求协作
-    COLLAB_RESPONSE = "collab_response"  # 协作响应
-    COLLAB_RESULT = "collab_result"  # 协作结果
+    # === 任务相关 ===
+    TASK_ASSIGN = "task_assign"  # [command] Leader 分配任务
+    TASK_ACCEPT = "task_accept"  # [inform] Agent 接受任务
+    TASK_REJECT = "task_reject"  # [inform] Agent 拒绝任务
+    TASK_COMPLETE = "task_complete"  # [inform] Agent 完成任务
+    TASK_FAILED = "task_failed"  # [inform] Agent 任务失败
+    TASK_PROGRESS = "task_progress"  # [inform] Agent 汇报进度
+    TASK_DELEGATE = "task_delegate"  # [command] Leader 委派子团队长管理子任务
 
-    # 控制相关
-    BROADCAST = "broadcast"  # 广播消息
-    INTERRUPT = "interrupt"  # Leader 中断 Agent
-    SHUTDOWN = "shutdown"  # 关闭 Agent
+    # === 协作相关 ===
+    COLLAB_REQUEST = "collab_request"  # [request] 请求协作
+    COLLAB_RESPONSE = "collab_response"  # [request] 协作响应
+    COLLAB_RESULT = "collab_result"  # [request] 协作结果
 
-    # 信息相关
-    QUESTION = "question"  # 提问
-    ANSWER = "answer"  # 回答
-    INFO = "info"  # 信息共享
-    ERROR = "error"  # 错误报告
+    # === 控制相关 ===
+    BROADCAST = "broadcast"  # [inform] 广播消息
+    INTERRUPT = "interrupt"  # [command] Leader 中断 Agent
+    SHUTDOWN = "shutdown"  # [command] 关闭 Agent
 
-    # 人类介入
-    HUMAN_APPROVAL = "human_approval"  # 请求人类审批
-    HUMAN_APPROVED = "human_approved"  # 人类已批准
-    HUMAN_REJECTED = "human_rejected"  # 人类已拒绝
+    # === 信息相关 ===
+    QUESTION = "question"  # [request] 提问
+    ANSWER = "answer"  # [inform] 回答
+    INFO = "info"  # [inform] 信息共享
+    ERROR = "error"  # [inform] 错误报告
+
+    # === 人类介入 ===
+    HUMAN_APPROVAL = "human_approval"  # [inform] 请求人类审批
+    HUMAN_APPROVED = "human_approved"  # [inform] 人类已批准
+    HUMAN_REJECTED = "human_rejected"  # [inform] 人类已拒绝
+
+    # === 冲突仲裁 ===
+    ARBITRATION_REQUEST = "arbitration_request"  # [request] 请求 Leader 仲裁
+    ARBITRATION_RESULT = "arbitration_result"  # [command] Leader 仲裁结果
+
+
+class MessageCategory(str, Enum):
+    """消息权限分类 — 总线层强制校验"""
+
+    COMMAND = "command"  # 指令类：只有 Leader/子团队长能发
+    REQUEST = "request"  # 请求类：子 Agent 间协作，不能命令
+    INFORM = "inform"  # 信息类：无权限限制
+
+
+# 消息类型 → 权限分类 映射
+_MESSAGE_CATEGORIES: dict[MessageType, MessageCategory] = {
+    # command
+    MessageType.TASK_ASSIGN: MessageCategory.COMMAND,
+    MessageType.TASK_DELEGATE: MessageCategory.COMMAND,
+    MessageType.INTERRUPT: MessageCategory.COMMAND,
+    MessageType.SHUTDOWN: MessageCategory.COMMAND,
+    MessageType.ARBITRATION_RESULT: MessageCategory.COMMAND,
+    # request
+    MessageType.COLLAB_REQUEST: MessageCategory.REQUEST,
+    MessageType.COLLAB_RESPONSE: MessageCategory.REQUEST,
+    MessageType.COLLAB_RESULT: MessageCategory.REQUEST,
+    MessageType.QUESTION: MessageCategory.REQUEST,
+    MessageType.ARBITRATION_REQUEST: MessageCategory.REQUEST,
+    # inform
+    MessageType.TASK_ACCEPT: MessageCategory.INFORM,
+    MessageType.TASK_REJECT: MessageCategory.INFORM,
+    MessageType.TASK_COMPLETE: MessageCategory.INFORM,
+    MessageType.TASK_FAILED: MessageCategory.INFORM,
+    MessageType.TASK_PROGRESS: MessageCategory.INFORM,
+    MessageType.BROADCAST: MessageCategory.INFORM,
+    MessageType.ANSWER: MessageCategory.INFORM,
+    MessageType.INFO: MessageCategory.INFORM,
+    MessageType.ERROR: MessageCategory.INFORM,
+    MessageType.HUMAN_APPROVAL: MessageCategory.INFORM,
+    MessageType.HUMAN_APPROVED: MessageCategory.INFORM,
+    MessageType.HUMAN_REJECTED: MessageCategory.INFORM,
+}
 
 
 class MessagePriority(int, Enum):
@@ -65,25 +114,22 @@ class Message:
     timestamp: datetime = field(default_factory=datetime.now)
     reply_to: str | None = None  # 回复的消息 ID
     session_id: str | None = None  # 所属会话
+    seq: int = 0  # 全局单调递增序列号，由 MessageBus 分配，保证因果顺序
 
     def is_broadcast(self) -> bool:
         return self.receiver is None
 
     def is_command(self) -> bool:
-        """是否为指令类消息（只有 Leader 能发）"""
-        return self.type in {
-            MessageType.TASK_ASSIGN,
-            MessageType.INTERRUPT,
-            MessageType.SHUTDOWN,
-        }
+        """是否为指令类消息（只有 Leader/子团队长能发）"""
+        return _MESSAGE_CATEGORIES.get(self.type) == MessageCategory.COMMAND
 
     def is_collaboration(self) -> bool:
         """是否为协作类消息（子 Agent 间请求）"""
-        return self.type in {
-            MessageType.COLLAB_REQUEST,
-            MessageType.COLLAB_RESPONSE,
-            MessageType.COLLAB_RESULT,
-        }
+        return _MESSAGE_CATEGORIES.get(self.type) == MessageCategory.REQUEST
+
+    def category(self) -> MessageCategory:
+        """获取消息的权限分类"""
+        return _MESSAGE_CATEGORIES.get(self.type, MessageCategory.INFORM)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -97,4 +143,5 @@ class Message:
             "timestamp": self.timestamp.isoformat(),
             "reply_to": self.reply_to,
             "session_id": self.session_id,
+            "seq": self.seq,
         }

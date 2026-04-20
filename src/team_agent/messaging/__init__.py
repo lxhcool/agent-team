@@ -2,9 +2,10 @@
 
 from team_agent.messaging.protocol import (
     Message,
+    MessageCategory,
     MessageType,
     MessagePriority,
 )
 from team_agent.messaging.bus import MessageBus
 
-__all__ = ["Message", "MessageType", "MessagePriority", "MessageBus"]
+__all__ = ["Message", "MessageType", "MessageCategory", "MessagePriority", "MessageBus"]

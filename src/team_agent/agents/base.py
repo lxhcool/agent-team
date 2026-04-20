@@ -244,6 +244,26 @@ class BaseAgent(ABC):
                 reply_to=message.id,
                 session_id=self._session_id,
             ))
+        elif message.type == MessageType.TASK_DELEGATE:
+            # 被委派为子团队长，管理子任务
+            sub_team = message.data.get("sub_team", [])
+            self.message_bus.add_sub_leader(self.name)
+            # 处理委派的任务内容
+            result = await self.chat(message.content)
+            # 完成后归还子团队长权限
+            self.message_bus.remove_sub_leader(self.name)
+            await self.message_bus.send(Message(
+                type=MessageType.TASK_COMPLETE,
+                sender=self.name,
+                receiver=message.sender,
+                content=result,
+                reply_to=message.id,
+                session_id=self._session_id,
+                data={"sub_team": sub_team},
+            ))
+        elif message.type == MessageType.ARBITRATION_REQUEST:
+            # Leader 收到仲裁请求 — 由 Coordinator 子类覆写处理逻辑
+            pass
         elif message.type == MessageType.COLLAB_REQUEST:
             result = await self.chat(message.content)
             await self.message_bus.send(Message(
