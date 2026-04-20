@@ -228,5 +228,28 @@ def init():
     console.print("[bold green]Project initialized![/]")
 
 
+@main.command()
+@click.option("--host", default="0.0.0.0", help="服务监听地址")
+@click.option("--port", default=8000, help="服务监听端口")
+@click.option("--config", "-c", default=None, help="配置文件路径")
+@click.option("--reload", is_flag=True, help="开发模式热重载")
+def serve(host: str, port: int, config: str | None, reload: bool):
+    """启动 API 服务"""
+    import uvicorn
+    from team_agent.api.app import create_app
+
+    project_config = load_config(config)
+    app = create_app(project_config)
+
+    console.print(Panel.fit(
+        f"[bold blue]Team Agent API[/]\n"
+        f"地址: http://{host}:{port}\n"
+        f"文档: http://{host}:{port}/docs",
+        title="Server",
+    ))
+
+    uvicorn.run(app, host=host, port=port, reload=reload)
+
+
 if __name__ == "__main__":
     main()
