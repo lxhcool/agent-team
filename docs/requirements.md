@@ -1,460 +1,657 @@
 # Team Agent 需求文档
 
-## 1. 项目概述
+## 1. 文档目标
 
-一个支持多模型、多 Skill、独立配置的团队协作 Agent 框架。
+本文档是 Team Agent 的叙述性主需求文档，回答三个问题：
 
-## 2. 核心需求
+1. 这个系统要解决什么问题。
+2. MVP 先做什么，不做什么。
+3. 各模块的边界、状态、权限和技术取舍是什么。
 
-### 2.1 Agent 生命周期
+结构化条目、优先级和唯一需求编号以 `docs/functional-requirements.md` 为准；本文档负责解释设计意图、阶段划分和实现边界。
 
-- **模式**：混合模式（服务长驻 + 会话级隔离）
-- 用户每次任务创建一个会话（Session）
-- 会话内 Agent 长驻协作，共享上下文
-- 会话结束后上下文归档到记忆系统
-- 参考 Kimi 的会话模式：底层长驻，会话级隔离
+---
 
-### 2.2 通信模型
+## 2. 产品目标与范围
 
-- **架构**：Leader（Orchestrator）+ 多个子 Agent
-- **通信规则**：
-  - Leader → 子 Agent：直接指令（分配任务、召回）
-  - 子 Agent → Leader：汇报（完成、求助、阻塞）
-  - 子 Agent ↔ 子 Agent：直接对话（请求协作、交换信息），不需要经过 Leader 中转
-  - Leader 广播：全员通知
-- **约束**：
-  - 子 Agent 之间可以互相对话 ✅
-  - 对话内容对 Leader 透明（Leader 监听所有通信）
-  - Leader 可以随时介入（发现偏题、冲突时）
-  - 子 Agent 不能给别的 Agent 分配任务，只有 Leader 能分配
-  - 子 Agent 之间只能"请求协作"，不能"命令"
-  - Leader 负责冲突仲裁
-- **技术实现 — 消息总线 + Leader 异步旁听**：
-  - 子 Agent 间消息通过总线直达，不经 Leader 中转
-  - Leader 使用独立的异步队列旁听所有消息，不阻塞主消息投递
-  - 消息流向：Agent A → Bus → Agent B（直达）+ Leader 队列（旁听，只读）
-  - 区别于中转模式：Leader 不是必经之路，不能拦截/修改消息，只能被动监听
-- **因果一致性策略 — 事后审计 + 全局序列号**：
-  - **架构决策**：Leader 旁听采用「事后审计」模式，不要求实时因果一致性
-  - 每条消息由 MessageBus 分配全局单调递增序列号 (seq)，保证因果序
-  - 子 Agent 间消息直达是同步的，接收者看到的顺序天然正确
-  - Leader 旁听走异步队列，可能有延迟；消费时攒一批消息按 seq 排序，还原因果顺序
-  - 任务状态变更 (TASK_COMPLETE/FAILED) 直接投递给 Leader，不走旁听队列，无乱序风险
-  - Leader 不需要实时感知子 Agent 间每一轮对话顺序；真正关心的是任务级别的状态变化
-- **参考产品**：CrewAI + Google A2A 协议
-- **Leader 扩展性 — 子团队委派 + 异步仲裁**：
-  - **问题**：Leader 承担规划、分配、监听、仲裁、归档，子 Agent 数量增加时成为瓶颈
-  - **子团队委派**：Leader 可将一组相关子任务委派给某个子 Agent 管理
-    - 该子 Agent 成为"子团队长"（sub_leader），获得对组内成员发送 command 类型消息的权限
-    - Leader 通过 `TASK_DELEGATE` 消息委派，指定子团队成员列表
-    - 子团队长完成任务后自动归还权限，Leader 仍然旁听子团队内通信
-  - **异步仲裁**：冲突仲裁走独立异步队列，不阻塞子 Agent 间正常通信
-    - 子 Agent 发送 `ARBITRATION_REQUEST` → 总线路由到仲裁队列
-    - Leader 异步消费仲裁队列，返回 `ARBITRATION_RESULT`
-    - 仲裁期间子 Agent 可继续其他工作，不阻塞
-- **消息权限边界 — 三级分类 + 总线层强制拦截**：
-  - **问题**：子 Agent 不能发命令，但技术实现上如何约束？
-  - **消息权限分类**（`MessageCategory`）：
-    - `command`：指令类（TASK_ASSIGN、INTERRUPT、SHUTDOWN、TASK_DELEGATE、ARBITRATION_RESULT）— 只有 Leader/子团队长能发
-    - `request`：请求类（COLLAB_REQUEST/RESPONSE、QUESTION、ARBITRATION_REQUEST）— 子 Agent 间协作请求
-    - `inform`：信息类（TASK_COMPLETE、INFO、ANSWER 等）— 无权限限制
-  - **总线层强制拦截**：`MessageBus.send()` 在投递前校验 `message.category()`
-    - 非 Leader/子团队长发送 command 类型 → 直接拒绝，不投递
-    - 这是技术硬约束，不依赖 Agent 自觉
+### 2.1 产品目标
 
-### 2.3 记忆系统
+Team Agent 是一个面向本地开发与工程协作场景的多 Agent 框架，目标是让用户在一个 Session 中，把一个较复杂的任务交给一个由 Leader 和多个子 Agent 组成的团队完成。
 
-- **三层记忆架构**：
-  - **Layer 1: Markdown（手写层）** — 人写，Agent 读
-    - `memory/project.md`：项目约定、技术栈、团队规范
-    - `memory/{agent}.md`：Agent 专属知识、角色定义
-    - 特点：人可读可编辑、Git 友好
-  - **Layer 2: 数据库（结构化层）** — Agent 写，结构化存储
-    - 对话历史
-    - 任务执行记录（谁做了什么、结果如何）
-    - Agent 间消息日志
-  - **Layer 3: 向量检索层** — 语义搜索历史经验
-    - 知识条目 embedding
-    - 支持相似度检索（"之前类似问题怎么解决的？"）
-    - **触发方式：Agent 主动调用**（非自动触发）
-      - 向量检索作为 `memory_search` Tool 注册，Agent 在 Skill 中声明启用
-      - Agent 自主判断是否需要参考历史经验，需要时才调用
-      - 避免每次都搜导致浪费 token 和上下文膨胀
-      - 类似人类：只有遇到不确定的问题时才去翻笔记
-    - Skill 中启用方式：`tools: [file_read, memory_search]`
-- **数据库引擎可切换**：
-  - 开发/轻量场景 → SQLite（零依赖，开箱即用）
-  - 生产场景 → PostgreSQL + pgvector（一栈搞定结构化 + 向量检索 + 全文搜索）
-  - 配置项：`memory.engine = "sqlite" | "postgresql"`
-  - 用抽象层屏蔽差异
-- **关键机制**：
-  - Agent 启动时自动加载对应 Markdown 文件作为上下文
-  - Agent 协作中产生的重要发现写入记忆
-  - 会话结束时 Leader 将关键信息归档
-- **记忆一致性 — 单向数据流 + DB 为 source of truth**：
-  - **写路径规则**（Agent 不直接写 Markdown）：
-    - Agent 写 → DB（唯一写入入口）
-    - DB 变更 → 触发异步同步 → Markdown 摘要（追加）+ 向量库（embedding）
-    - 人写 → Markdown（手写层，Agent 只读）
-    - 人改 Markdown → 不自动同步到 DB（需要手动 reload 或重启会话）
-  - **读路径规则**：
-    - Agent 启动时 → 读 Markdown（项目约定 + 历史摘要）
-    - 运行时 → 读 DB（当前会话上下文）
-    - 需要时 → 搜向量库（通过 `memory_search` Tool）
-  - **同步策略**：
-    - Markdown 摘要同步：会话结束时 Leader 调用 `archive_session()`，生成摘要写入 Markdown
-    - 向量索引同步：DB 写入后异步触发 embedding，不阻塞主流程（最终一致）
-    - 轻量同步：任务完成时追加摘要行到 Markdown（不覆盖人写内容）
-  - **一致性保证**：
-    - DB 是 source of truth（结构化数据，完整记录）
-    - Markdown 是人可读的摘要/视图（可能落后于 DB，但不会超前）
-    - 向量库是检索索引（最终一致，允许短暂延迟）
+系统需要具备以下能力：
 
-### 2.4 Agent 发现与注册
+- 以 Session 为单位组织任务、上下文、产物和状态。
+- 由 Leader 负责规划、分配、汇总和用户交互。
+- 由子 Agent 负责执行具体工作，如搜索、编码、审查、总结。
+- 允许 Agent 使用 Tool 操作本地工作空间，并在安全边界内调用外部模型。
+- 保留执行轨迹、关键状态和结果摘要，便于恢复、审计和复盘。
 
-- **Agent 自动发现**：
-  - 配置文件驱动：`agents/` 目录下的 YAML/JSON 配置文件，启动时自动扫描加载
-  - 每个 Agent 配置文件声明：name、model、skills、system_prompt、capabilities
-  - 类似 Skill 的自动发现机制，放到 `agents/` 目录即自动注册
-- **Agent Card（能力声明）**：
-  - 每个 Agent 启动后向总线注册 Agent Card，广播自身能力
-  - Agent Card 内容（参考 Google A2A 协议）：
-    - `name`：Agent 名称
-    - `description`：角色描述
-    - `capabilities`：能做什么（如 "代码审查"、"资料搜索"）
-    - `skills`：配备的 Skill 列表
-    - `model`：使用的模型
-    - `constraints`：限制（如 "只能读文件，不能执行命令"）
-  - Leader 规划任务时读取 Agent Card 进行路由决策
-  - 其他 Agent 协作请求时也可查询 Agent Card 找到合适的协作对象
-- **新 Agent 动态加入**：
-  - 运行中可通过 API/CLI 动态注册新 Agent
-  - 新 Agent 加入后广播 Agent Card，Leader 和其他 Agent 即刻可知
-  - 不需要 Leader 批准（注册是基础设施层，任务是业务层）
-  - 但 Agent 能否接到任务取决于 Leader 的路由决策
-- **Agent 退出**：
-  - 正常退出：广播 `SHUTDOWN`，Leader 重新分配其未完成任务
-  - 异常退出：Monitor 超时检测 → Leader 仲裁（重试/转交/跳过）
+### 2.2 MVP 范围
 
-### 2.5 Skill 系统
+MVP 的目标不是一次性做出完整终局架构，而是跑通一个稳定的最小闭环：
 
-- **Skill 形态**：Markdown 文件（当前主流标准，同 Claude Code / Cursor / Copilot）
-- **Skill 与 Tool 的关系**：
-  - **Skill（md 文件）** = 提示词 + 知识 + 使用流程 → 用户关心的
-  - **Tool（Python 函数）** = 底层执行能力（file_read, code_execute 等）→ 框架内置
-  - Skill 在 frontmatter 中声明需要的 tools，如 `tools: [file_read, code_execute]`
-- **内置 Skill**：从 GitHub 找成熟的 prompt 模板内置
-- **用户自定义 Skill**：放到 `skills/` 目录，自动发现
-- **Skill 文件示例**：
-  ```markdown
-  ---
-  name: code_review
-  description: 代码审查技能
-  tools: [file_read, code_execute]
-  ---
-  # 代码审查技能
-  你是一个资深代码审查专家，请按以下步骤审查代码...
-  ```
+用户输入任务 -> Leader 规划 -> 用户确认 -> 子 Agent 串行执行 -> 结果交付 -> Session 归档
 
-### 2.6 任务编排
+MVP 默认采用以下边界：
 
-- **LLM 驱动为主**（参考 CrewAI / AutoGen / OpenAI Swarm 的做法）
-- **流程**：
-  1. Leader 接收任务 → LLM 规划（拆解 + 分配）
-  2. 展示方案给用户确认（可配置 `auto_approve=true` 跳过）
-  3. 执行过程中 Leader 动态调整
-- **可选约束**：支持用户预定义 pipeline 作为约束
-  - 例："这个项目必须走 设计→开发→测试 流程"
-- **常见规划缓存**：缓存为模板，减少 LLM 调用
-- **防死循环**：
-  - 设置 `max_iterations`
-  - Leader 强制终止权
-- **并发任务执行**：
-  - **同一 Session 内支持并行执行多个独立任务**
-  - Plan 中每个步骤有 `dependencies` 字段，无依赖的步骤可并行
-  - Leader 根据依赖图（DAG）调度，同层级无依赖步骤同时分配给不同 Agent
-  - 资源调度策略：
-    - 每个 Agent 同一时刻只处理一个任务（独占式，避免上下文混乱）
-    - Leader 维护可用 Agent 池，空闲 Agent 优先分配
-    - Agent 不够时，任务排队等待；可配置 `max_queue_size`
-    - 子团队委派：一组相关任务可委派子团队长统筹，Leader 只管子团队长
-  - 并行度控制：`max_parallel_tasks` 配置（默认=Agent 数量，即全并行）
-  - 配置示例：
-    ```yaml
-    orchestration:
-      max_parallel_tasks: 3
-      max_queue_size: 10
-      strategy: "dag"  # dag | pipeline | manual
-    ```
+- 单机单进程
+- `asyncio` 协程运行时
+- `InMemoryMessageBus`
+- CLI-first
+- SQLite 持久化
+- Markdown + DB 两层记忆
+- 串行为主的任务执行模型
+- 最小可用的 Tool 集合
 
-### 2.7 人类介入
+### 2.3 非目标
 
-- **可配置模式**：
-  - `mode: "auto"` — 全自动，不介入
-  - `mode: "supervised"` — 关键节点审批（默认）
-  - `mode: "manual"` — 每步确认
-- **关键介入点**（supervised 模式下）：
-  - 任务规划确认 — Leader 出方案后，用户确认再执行
-  - 危险操作审批 — 删除文件、部署上线、发送邮件等
-  - 最终交付审查 — 输出结果前，人过一眼
-- **中间过程不介入** — 搜索资料、写代码草稿等
+以下能力不属于 MVP 默认范围：
 
-### 2.8 容错机制
+- 生产级消息中间件
+- 完整 Web 管理后台
+- 向量检索与复杂长期记忆
+- 多模态全链路上传与解析
+- 自动 Git 工作流
+- 插件市场与第三方生态
+- Docker/容器级隔离执行
+- 大规模并行 DAG 调度
 
-- **Checkpoint 机制**：每步操作落盘，失败可续，内容不丢
-  - **粒度：业务步骤为主 + Tool 执行为辅**
-    - Level 1（默认开启）：业务步骤 Checkpoint — 用户能理解的最小有意义单元
-      - 如 "搜索资料" 完成、"写代码" 完成 → 保存结果摘要和产出物路径
-    - Level 2（可选，`debug_mode=true` 开启）：Tool 执行 Checkpoint — 细粒度调试
-      - 如 `file_read("./main.py")` → 保存读取结果，`execute("npm test")` → 保存执行输出
-  - Checkpoint 记录内容：step、status、result_summary、artifacts、时间、token_usage
-  - 状态流转：开始前 → "正在做 X" / 完成后 → "X 已完成" / 失败 → "X 失败，原因 Y"
-- **各故障场景策略**：
-  - LLM API 调用失败 → 指数退避重试（1s→2s→4s→8s，最多3次）→ 切换备用模型（fallback_model）→ 仍失败上报用户
-  - Agent 输出异常 → Leader 把之前输出 + 问题描述发给 Agent 重新生成
-  - Tool 执行失败 → 报错信息喂回 Agent 修复重跑，最多3轮
-  - Agent 间冲突 → Leader 仲裁拍板
-  - 死循环 → max_iterations 强制终止，输出已完成的成果，标记未完成部分
+这些能力可以在第二阶段按真实使用需求逐步引入。
 
-### 2.9 上下文管理
+---
 
-- **生成截断**（输出到一半停了）：
-  - 检测 finish_reason == "length"
-  - 自动续写：已输出内容 + "请继续" 再调 LLM，拼接直到完成
-  - 任务拆分：超长输出说明任务太大，Leader 应拆分子任务
-- **输入超限**（上下文塞不进去）：
-  - 分层压缩策略：
-    - 优先级1: System Prompt + Skill 内容 [必须保留]
-    - 优先级2: 当前任务指令 [必须保留]
-    - 优先级3: 最近 N 轮对话 [完整保留]
-    - 优先级4: 更早对话 → 压缩为摘要 [有损保留]
-    - 优先级5: Agent 间其他对话 → 只保留结论 [高度压缩]
-    - 优先级6: 记忆文件 → 只检索相关片段 [按需加载]
-  - 滑动窗口 + 摘要压缩 + 按需检索
-- **上下文膨胀**（长时间运行）：
-  - 每完成一个关键步骤 → 成果写入 checkpoint + 生成摘要
-  - 新一轮对话用摘要替代历史，"清空缓存但保留结论"
-- **核心原则**：永远不让 LLM 看到所有历史，只给当前需要的信息
+## 3. 核心术语与域模型
 
-### 2.10 交互模式
+### 3.1 Session
 
-用户有三种交互方式：
+Session 是一次用户任务执行的边界，包含：
 
-| 模式 | 场景 | 流程 |
-|------|------|------|
-| **任务模式** | 有明确任务要完成 | 用户 → Leader 编排 → Agent 团队执行 |
-| **单聊模式** | 探索性、针对性讨论 | 用户 → 指定某个 Agent 自由对话 |
-| **圆桌模式** | 头脑风暴、多视角讨论 | 用户 → 拉多个 Agent 在聊天室自由发言，无 Leader 编排 |
+- 用户目标
+- 当前计划
+- 参与 Agent 列表
+- 任务状态
+- 关键消息
+- 附件与输出产物
+- Token 与成本统计
+- 归档摘要
 
-- **单聊模式**：用户可选择任意 Agent 直接对话，如"找 Researcher 聊聊技术方案"
-- **圆桌模式**：多个 Agent 自由讨论，没有 Leader 编排，所有参与 Agent 平等发言
-- **圆桌收敛策略**（无 Leader 时讨论如何结束）：
-  - 轮数限制（默认）：配置 `max_rounds=5`，每轮所有 Agent 发言一次，到轮数自动结束
-  - 共识检测（可选）：每轮结束后用 LLM 判断是否达成共识，达成则提前结束
-  - 用户手动（默认开启）：每轮结束后展示给用户，可继续/结束/追加问题
-  - 配置示例：
-    ```yaml
-    roundtable:
-      max_rounds: 5
-      consensus_check: false
-      user_control: true
-    ```
-- **模式转换**：讨论出成果后，可以把圆桌结论交给 Leader 转为正式任务执行
+Session 是上下文、资源和审计的顶层单位。
 
-### 2.11 用户体系
+### 3.2 Task
 
-- **认证方式**：账号密码 + API Key（方便程序调用）
-- **数据隔离**：每个用户数据完全独立
-  - Agent 配置
-  - 会话历史
-  - 记忆文件
-  - Skill 库
-  - 任务记录
-  - **LLM API Key**
-- **LLM Key 管理**：
-  - 每个用户在 Web 界面"设置→模型配置"中配置自己的 Key
-  - 界面支持：添加/编辑/删除 Provider、填写 Key、选择默认模型、测试连通性
-  - 费用各自承担
-  - Key 加密存储（AES-256），日志中脱敏（sk-***...xxx）
-  - Agent 配置中引用 provider 名，Key 从用户配置中自动取
-  - Agent 级别可覆盖使用不同 Key
-  - 平台也可提供统一 Key 作为默认兜底
-- **两种使用模式**：
-  - **个人模式**：单用户，所有数据私有
-  - **团队模式**：多用户共享一个项目空间，可协作
-    - 团队创建者 → 管理员（可管理成员、配置）
-    - 团队成员 → 共享项目、Agent、记忆，会话各自独立
-    - 团队公共资源：公共 Skill、项目记忆
-    - 每个人仍用自己的 Key 调用模型
-- **扩展预留**：OAuth 登录、公共 Skill 市场、用量配额
+Task 是 Leader 在 Session 内拆解出的一个可执行工作单元。Task 应至少包含：
 
-### 2.12 可观测性
+- `task_id`
+- `session_id`
+- `title`
+- `description`
+- `status`
+- `assigned_agent`
+- `dependencies`
+- `artifacts`
+- `priority`
+- `assignment_version`
+- `approval_required`
+- `result_summary`
 
-- **实时状态面板**：
-  - 每个 Agent 当前在做什么（空闲/执行中/等待中）
-  - 任务整体进度（待做/进行中/已完成）
-  - Agent 间通信实时展示
-- **执行轨迹**：
-  - 每步调用了什么 LLM、消耗多少 token、耗时多少
-  - 输入输出完整记录
-  - 可回溯任意步骤的详情
-- **日志系统**：
-  - 分级日志（DEBUG/INFO/WARN/ERROR）
-  - 按会话/Agent/任务筛选
-  - 方便调试和审计
-- **用量统计**：
-  - 每个用户的 token 消耗
-  - 每个 Agent/模型的调用次数和成本
-  - 按时间段统计
+Task 是调度、重试、恢复、可观测性的核心对象。
 
-### 2.13 版本控制集成
+### 3.3 Agent
 
-- **Git 协作策略**：
-  - Agent 修改代码后需要与 Git 协作，避免混乱
-- **自动 Commit 策略**：
-  - 每完成一个业务步骤（与 Checkpoint 对齐），自动 commit
-  - Commit message 由 Agent 生成，格式：`[agent-name] step description`
-  - 例：`[coder] feat: add user authentication module`
-  - 可配置 `auto_commit: true`（默认）| `manual`
-- **分支策略**：
-  - 每个 Session 创建独立分支：`agent/session-{id}`
-  - 避免直接在 main 分支上操作
-  - Session 完成后，用户决定是否合并（类似 PR 流程）
-  - 配置：`git.branch_strategy: "session"` | `"feature"` | `"direct"`
-- **冲突处理**：
-  - Agent 自身产生的冲突：Agent 自主 `git rebase` 或 `git merge` 解决
-  - Agent 间产生冲突：Leader 仲裁，指定某个 Agent 负责合并
-  - 与人类修改冲突：暂停 Agent，通知用户手动解决
-- **安全约束**：
-  - 禁止 `git push --force`
-  - 禁止直接 push 到 main/master（需通过 PR 或用户确认）
-  - `git reset --hard` 需要用户确认
-- **配置示例**：
-  ```yaml
-  git:
-    auto_commit: true
-    branch_strategy: "session"
-    protected_branches: [main, master, production]
-    commit_prefix: "[{agent_name}]"
-  ```
+Agent 是一个具备角色、模型、技能和工具权限的执行单元。MVP 阶段每个 Agent 运行在独立 `asyncio.Task` 中，对外暴露统一接口：
 
-### 2.14 多模态支持
+- `send()`
+- `receive()`
+- `execute()`
 
-- **设计原则**：文本为主，多模态为辅，按需扩展
-- **输入多模态**（Agent 接收）：
-  - **图像**：UI 截图、架构图、错误截图
-    - 通过 LLM 的视觉能力处理（GPT-4o / Claude 3.5+ 支持图片输入）
-    - 新增 Tool：`image_analyze(path, question)` — 读取图片 + 提问
-  - **文档**：PDF、Word、Excel
-    - 新增 Tool：`document_parse(path)` → 提取文本/表格/结构
-    - PDF 解析：PyMuPDF / pdfplumber
-    - Word/Excel：python-docx / openpyxl
-  - **音频**：语音备忘、会议录音
-    - 新增 Tool：`audio_transcribe(path)` → 转文字
-    - 使用 Whisper API 或本地模型
-- **输出多模态**（Agent 生成）：
-  - **图表**：Mermaid / PlantUML 生成架构图、流程图
-  - **文件**：生成 PDF 报告、Excel 数据表
-- **Skill 声明方式**：
-  - 在 Skill 的 frontmatter 中声明需要的多模态 tools
-  - 例：`tools: [file_read, image_analyze, document_parse]`
-  - Agent 只在 Skill 需要时才具备多模态能力
-- **LLM 适配**：
-  - 不同模型的多模态能力不同，Router 根据 Agent Card 中的能力需求选择合适模型
-  - 如需要图片理解的任务路由到支持视觉的模型
-- **配置示例**：
-  ```yaml
-  multimodal:
-    image:
-      enabled: true
-      max_size_mb: 10
-      supported_formats: [png, jpg, webp, gif]
-    document:
-      enabled: true
-      supported_formats: [pdf, docx, xlsx, pptx]
-    audio:
-      enabled: false  # 默认关闭，按需开启
-      max_duration_min: 30
-  ```
+### 3.4 Message
 
-### 2.15 工作空间
+Message 是 Agent 之间或用户与系统之间的通信对象。Message 需要包含最小可靠性语义：
 
-- **主模式：CLI**（类似 Claude Code）
-  - 用户在终端运行，指定项目目录作为工作空间
-  - Agent 直接读写本地文件、执行命令
-  - 交互方式：终端对话
-  - 适合已有本地项目的开发者
-- **Workspace 抽象接口**：
-  - `read_file(path)` / `write_file(path, content)` / `execute(command)` / `list_files(pattern)`
-  - Agent 通过统一接口操作，不关心底层实现
-  - 预留扩展：LocalWorkspace / SandboxWorkspace / CloudWorkspace
-- **安全策略（关键 — 即使本地模式也需要防护）**：
-  - **命令执行安全**：
-    - 命令白名单/黑名单机制：配置 `allowed_commands` 和 `blocked_commands`
-    - 默认黑名单：`rm -rf /`、`format`、`del /s`、`mkfs`、`dd`、`chmod 777` 等破坏性命令
-    - 受限模式（`safe_mode=true`，默认开启）：仅允许白名单命令，未列出的需用户确认
-    - 完整模式（`safe_mode=false`）：允许所有命令，但危险命令仍需确认
-    - 危险命令确认：即使关闭 safe_mode，破坏性操作仍弹出确认（参考人类介入 2.8）
-  - **文件系统安全**：
-    - 工作目录限制：Agent 只能在指定项目目录内操作
-    - 路径穿越防护：拒绝 `../`、符号链接逃逸等
-    - 敏感文件保护：`.env`、`id_rsa`、`credentials.json` 等默认禁止读写
-    - 写保护：可配置 `readonly_paths`（如生产配置文件）
-  - **安全模式配置示例**：
-    ```yaml
-    workspace:
-      type: local
-      safe_mode: true
-      allowed_commands: [git, npm, pip, python, node, ls, cat, grep, find]
-      blocked_commands: [rm -rf, format, mkfs, dd]
-      readonly_paths: [".env", "config/production.yml"]
-      protected_files: [".env", "id_rsa", "*.pem"]
-    ```
-- **远程沙箱模式**（第二阶段）：
-  - Docker 容器隔离：每个 Session 独立容器
-  - 网络隔离：限制出站网络
-  - 资源限制：CPU/内存/磁盘配额
-  - 代码执行安全兜底
-- **云端 IDE 模式**（远期）：
-  - 集成 Web IDE（如 code-server）
-  - 浏览器内直接查看 Agent 修改的代码
+- `message_id`
+- `session_id`
+- `seq`
+- `sender`
+- `receiver`
+- `message_type`
+- `category`
+- `content`
+- `attachments`
+- `dedupe_key`
+- `ack_at`
+- `retry_count`
+- `created_at`
 
-## 3. 技术栈
+### 3.5 Attachment / Artifact
 
-### 后端
-- Python 3.12 + FastAPI
-- SQLAlchemy（ORM）
-- asyncio（异步原生）
-- SQLite（开发）/ PostgreSQL + pgvector（生产）
-- Click + Rich（CLI 交互）
+- `Attachment` 指用户输入给 Session 的文件。
+- `Artifact` 指 Agent 在执行过程中产生的输出，如代码文件、报告、截图分析结果、检查报告。
 
-### 前端
-- React + Next.js
-- TypeScript
-- Tailwind CSS + shadcn/ui
-- WebSocket（实时状态推送）
+二者都应采用统一元数据模型管理，至少包含：
 
-### 部署
-- Docker Compose（App + DB）
-- 一键部署脚本（支持宝塔面板等）
-  - 自动安装依赖、配置数据库、启动服务
-  - 提供 install.sh 一键脚本
-  - 宝塔面板集成：Docker 应用模板
+- `id`
+- `source`
+- `path`
+- `mime_type`
+- `size_bytes`
+- `created_by`
+- `related_task_id`
+- `checksum`
+- `retention_policy`
 
-### 分阶段计划
-- **MVP**：CLI（Rich 终端界面）+ FastAPI 后端
-- **第二阶段**：React Web 管理界面（配置管理 + 可观测性面板）
+### 3.6 Checkpoint
 
-## 4. 非功能需求
+Checkpoint 是为恢复、展示和审计而记录的执行快照。MVP 默认记录业务级 Checkpoint，Tool 级 Checkpoint 作为调试增强能力。
 
-- 支持多模型（OpenAI、Claude、本地模型，可插拔）
-- 每个 Agent 支持配置独立的模型
-- 每个 Agent 可配备多个 Skill
-- 每个 Agent 有独立的提示词
-- 用户可自定义创建 Agent
-- Agent 能力声明（Agent Card）支持自动发现和路由
-- 同一 Session 内支持并行执行独立任务（DAG 调度）
-- 工作空间安全防护（命令白/黑名单、文件系统隔离、safe_mode）
-- Git 版本控制集成（自动 commit、Session 分支、冲突策略）
-- 多模态支持（图像/文档/音频，按需启用）
-- 可扩展的 Tool 和 Skill 生态
+---
+
+## 4. 系统架构与运行时边界
+
+### 4.1 总体架构
+
+MVP 架构采用：
+
+- 一个 Leader
+- 多个子 Agent
+- 一个 MessageBus
+- 一个 Workspace 抽象
+- 一个 Memory 层
+- 一个 LLM Router
+
+逻辑流：
+
+User -> Leader -> Plan -> Task -> Agent -> Tool / LLM -> Result -> Leader -> User
+
+### 4.2 Agent 运行时
+
+MVP 阶段采用 `asyncio` 协程运行时：
+
+- 每个 Agent 是一个独立 `asyncio.Task`
+- 单个 Agent 异常不应拖垮整个 Session
+- 由 `AgentSupervisor` 负责捕获异常、记录状态、上报 Leader
+
+扩展方向：
+
+- `ProcessAgent`
+- `ContainerAgent`
+
+但这两者不进入 MVP 默认范围。
+
+### 4.3 MessageBus
+
+MVP 使用 `InMemoryMessageBus`：
+
+- 普通消息走内存队列
+- 关键状态消息写 DB 后投递
+- MessageBus 负责分配全局单调递增 `seq`
+
+可靠性原则：
+
+- 关键消息采用至少一次投递
+- 接收端必须幂等消费
+- 重放消息不能导致重复执行同一 Task assignment
+
+### 4.4 Workspace
+
+Workspace 是 Agent 操作文件系统和命令执行的统一抽象。MVP 使用 `LocalWorkspace`，但必须受安全策略约束：
+
+- 工作目录限制
+- 路径逃逸防护
+- 敏感文件保护
+- 命令黑名单
+- `safe_mode`
+
+### 4.5 Memory
+
+MVP 采用两层记忆：
+
+- Layer 1: Markdown，只读的人写约定和角色文件
+- Layer 2: 数据库，存储会话、任务、消息、日志和摘要
+
+Layer 3 向量检索保留到第二阶段。
+
+### 4.6 LLM Router
+
+LLM Router 负责在统一接口下调用不同 Provider，并处理：
+
+- 模型路由
+- 重试
+- fallback
+- token 统计
+- 成本预算
+- 流式或完整模式
+
+---
+
+## 5. 核心行为定义
+
+### 5.1 Session 状态机
+
+统一采用以下状态机：
+
+`CREATED -> PLANNING -> AWAITING_APPROVAL -> EXECUTING -> COMPLETED`
+
+分支状态：
+
+- `EXECUTING -> PAUSED -> EXECUTING`
+- `PLANNING / AWAITING_APPROVAL / EXECUTING -> CANCELLED`
+- `PLANNING / AWAITING_APPROVAL / EXECUTING -> FAILED`
+
+状态说明：
+
+- `CREATED`: Session 已建立，等待任务输入或初始化完成。
+- `PLANNING`: Leader 正在拆解任务和生成计划。
+- `AWAITING_APPROVAL`: 等待用户确认计划或高风险操作。
+- `EXECUTING`: Agent 正在执行任务。
+- `PAUSED`: 执行冻结，可后续恢复。
+- `COMPLETED`: 任务已完成并交付。
+- `FAILED`: 不可恢复错误导致终止，但应尽量保留已完成成果。
+- `CANCELLED`: 用户主动取消。
+
+### 5.2 Task 状态机
+
+Task 状态机定义为：
+
+`PENDING -> READY -> ASSIGNED -> RUNNING -> COMPLETED`
+
+可选中间/终止状态：
+
+- `BLOCKED`
+- `WAITING_APPROVAL`
+- `FAILED`
+- `CANCELLED`
+- `SKIPPED`
+
+规则：
+
+- Leader 负责 `READY / ASSIGNED / CANCELLED / SKIPPED`
+- Agent 负责上报 `RUNNING / COMPLETED / FAILED / BLOCKED`
+- 人类审批影响 `WAITING_APPROVAL` 的流转
+
+### 5.3 上下文共享规则
+
+MVP 不采用“所有 Agent 共享完整上下文”的做法，而采用分层共享：
+
+- Session 级共享：用户目标、当前计划、步骤摘要、产物引用、必要结论
+- Agent 私有：working context、最近消息、执行中的局部推理材料
+- Agent 间协作：只共享完成当前协作所需的最小上下文
+
+这样做的目标是避免：
+
+- 上下文膨胀
+- Agent 间互相污染
+- 单个错误输出扩散到整个团队
+
+### 5.4 协作规则
+
+MVP 采用以下协作边界：
+
+- 每个 Agent 同时只有一个主任务
+- 协作请求不能抢占主任务，只能轻量回复或进入队列等待处理
+- 复杂协作应由 Leader 转成正式子任务
+- Leader 的介入方式是追加控制消息，而不是拦截已投递消息
+
+### 5.5 审批与安全优先级
+
+当多个控制机制同时生效时，统一按以下优先级裁决：
+
+1. 硬安全约束
+   - 工作目录限制
+   - 路径逃逸防护
+   - 敏感文件保护
+   - 黑名单命令
+2. Tool 风险级别
+3. Session 的人工介入模式
+4. 用户对单次动作的局部授权
+
+规则：
+
+- 低层配置只能收紧高层安全限制，不能放宽
+- 即使在 `auto` 模式，高风险操作仍可要求审批
+- 即使关闭 `safe_mode`，破坏性操作仍应触发硬确认或硬拦截
+
+### 5.6 Agent 活性检测
+
+系统应记录 Agent 的：
+
+- `heartbeat_at`
+- `last_progress_at`
+- `current_task_id`
+- `status`
+
+判定无响应时，Leader 需要依据状态采取：
+
+- 继续等待
+- 重试
+- 转交其他 Agent
+- 标记失败并通知用户
+
+---
+
+## 6. 模块化需求说明
+
+### 6.1 通信系统
+
+通信模型采用 Leader + 子 Agent 架构。
+
+MVP 约束如下：
+
+- Leader 可以给子 Agent 分配任务和发送控制消息
+- 子 Agent 可以给 Leader 汇报状态、结果和阻塞原因
+- 子 Agent 间允许协作请求，但不允许互相下达 command
+- 关键消息要持久化，普通协作消息可仅保存在内存
+
+第二阶段可扩展：
+
+- 子团队委派
+- 异步仲裁
+- 消息重放
+- 外部消息中间件
+
+### 6.2 任务编排
+
+Leader 负责：
+
+- 将用户目标拆成 Task
+- 生成执行顺序
+- 分配给合适 Agent
+- 在执行过程中根据结果动态调整
+
+MVP 默认采用串行执行优先：
+
+- 先保证流程闭环与状态可控
+- 并行 DAG 调度在第二阶段引入
+
+### 6.3 LLM 调用层
+
+MVP 要解决的是“统一调用”和“失败可恢复”，而不是一次性兼容所有高级能力。
+
+MVP 建议：
+
+- 优先支持 OpenAI / Anthropic 两类 Provider
+- 支持统一接口
+- 支持 retry + fallback
+- 支持 token 与成本统计
+- 支持完整模式与流式模式
+
+第二阶段再补：
+
+- 更多 Provider
+- 更复杂的结构化输出策略
+- Prompt A/B 实验
+- 更细粒度限流与预算策略
+
+### 6.4 Skill 与 Tool 系统
+
+Skill 是任务执行的提示模板和流程知识，Tool 是底层执行能力。
+
+MVP 建议：
+
+- Skill 使用 Markdown + frontmatter
+- Tool 使用 Python 函数注册
+- 先实现最小 Tool 集：
+  - `file_read`
+  - `file_write`
+  - `file_list`
+  - `shell_execute`
+  - `web_search`
+  - `send_message`
+  - `ask_human`
+
+第二阶段再引入：
+
+- 第三方 Tool 包
+- Git Tool
+- 多模态 Tool
+- 热加载优化
+
+### 6.5 Memory
+
+Memory 层原则：
+
+- DB 是结构化数据的 source of truth
+- Markdown 是人可读视图与手写约定层
+- 向量库是未来的检索增强层，不作为 MVP 依赖
+
+写入路径：
+
+- Agent / Session 运行时写 DB
+- 会话归档后生成摘要
+- 人写 Markdown 不自动反向同步 DB
+
+### 6.6 Workspace 与安全
+
+安全是架构硬边界，而不是“模型自己注意”。
+
+MVP 应优先落地：
+
+- 工作目录限制
+- 路径穿越防护
+- 敏感文件保护
+- 黑名单命令
+- `safe_mode`
+- Tool 风险分级
+- Prompt Injection 的最小防线：最小权限 + 危险操作硬拦截
+
+### 6.7 可观测性
+
+MVP 重点不在花哨展示，而在“出问题能查”。
+
+MVP 建议记录：
+
+- Session 状态
+- Task 状态
+- Agent 当前状态
+- 关键消息流
+- Tool 执行元数据
+- LLM 调用元数据
+
+第二阶段再加强：
+
+- 全链路可视化
+- 消息时序图
+- 复杂 TUI / Web 看板
+- 结构化日志外接 ELK / Loki
+
+### 6.8 配置管理
+
+配置系统统一采用 YAML + Pydantic。
+
+建议区分两类配置：
+
+1. 治理类配置
+   - 安全
+   - 审批
+   - 预算
+   - 路径限制
+   - 只能被收紧，不能被下层放宽
+2. 行为类配置
+   - 模型
+   - Prompt
+   - stream
+   - fallback
+   - 可以按层覆盖
+
+### 6.9 用户文件交互
+
+MVP 只保留 CLI 场景最关键的文件交互方式：
+
+- 路径引用
+- `/attach` 命令
+- 基础附件模型
+
+第二阶段再做：
+
+- 剪贴板图片粘贴
+- Web 拖拽上传
+- 文件预览
+- 智能多模态路由
+- 输出文件交付目录自动化
+
+### 6.10 Git 与外部集成
+
+Git 自动化和外部系统集成都不应进入 MVP 默认路径。
+
+Git 相关建议：
+
+- MVP 仅保留只读状态检查或显式用户触发动作
+- 自动 commit、Session 分支、冲突合并策略放到第二阶段
+- `auto_commit` 默认不应开启
+
+外部集成建议：
+
+- Webhook、IM、MCP、CI/CD 均保留为第二阶段扩展点
+
+---
+
+## 7. 技术栈建议
+
+### 7.1 MVP 建议技术栈
+
+#### 语言与后端
+
+- Python 3.12
+- FastAPI
+  - 只保留最小 API 能力，如健康检查、Session 查询、后续远程接入预留
+  - MVP 不强调 Web 管理端
+
+#### CLI 与交互
+
+- Typer + Rich
+  - 比 Click 更适合构建 CLI-first 的命令与交互式体验
+  - 与 Pydantic/FastAPI 生态搭配更自然
+
+#### 配置与数据模型
+
+- Pydantic v2
+- PyYAML
+
+#### 持久化
+
+- SQLAlchemy 2.0 或 SQLModel
+- SQLite
+  - 先以单文件数据库承载 Session、Task、Message、LLM Call、Tool Execution
+
+#### 并发与调度
+
+- `asyncio`
+- `InMemoryMessageBus`
+
+#### 质量保障
+
+- pytest
+- ruff
+
+### 7.2 第二阶段建议
+
+当 MVP 稳定、真实负载和需求边界明确后，再逐步引入：
+
+- PostgreSQL + pgvector
+- Redis Streams 或 NATS
+- React + Next.js 管理端
+- WebSocket 实时状态推送
+- Docker 隔离执行
+- 插件系统
+- 多模态解析链路
+- Webhook / Slack / 飞书 / 邮件通知
+
+### 7.3 暂不建议过早落地的选择
+
+以下技术不要在第一阶段就作为必需品压进实现范围：
+
+- 生产级消息中间件
+- 复杂前端栈
+- 自动 Git 工作流
+- 全量多模态链路
+- 插件生态
+- 云端 IDE 形态
+
+原因很简单：这些能力会显著提高实现复杂度，但并不决定 MVP 是否能跑通。
+
+---
+
+## 8. MVP 范围与里程碑
+
+### 8.1 MVP 必须跑通的闭环
+
+MVP 必须实现：
+
+- Leader + 2-3 个子 Agent 的基本协作流程
+- InMemoryMessageBus
+- 基础 LLM 调用层（OpenAI + Anthropic 至少二选一，支持 retry/fallback）
+- Markdown Skill 加载
+- 最小 Tool 集
+- CLI 交互式 REPL
+- SQLite 持久化
+- Markdown 记忆加载
+- 基础安全边界
+- Session 与 Task 状态机
+- 任务模式完整流程
+- 单聊模式
+
+### 8.2 MVP 延后能力
+
+以下能力明确延后：
+
+- 向量检索
+- 子团队委派
+- 异步仲裁
+- 并行 DAG 调度
+- Session 暂停/恢复的完整断点续跑
+- 多模态能力
+- Git 自动集成
+- 用户体系与团队模式
+- Web 管理界面
+- 插件系统
+- Docker 沙箱
+- 外部通知和 MCP
+
+### 8.3 建议里程碑
+
+| 里程碑 | 目标 | 核心交付 |
+|--------|------|----------|
+| M1 | 跑通单 Agent 会话 | 基础 CLI、单 Agent、LLM 调用 |
+| M2 | 跑通多 Agent 编排 | Leader、MessageBus、Task 流转 |
+| M3 | 跑通 Tool 与 Workspace | 文件与命令 Tool、安全边界 |
+| M4 | 跑通持久化与归档 | SQLite、Session/Task/Message 记录、摘要归档 |
+| M5 | 打磨可观测性与容错 | 日志、错误提示、重试、基础调试命令 |
+
+---
+
+## 9. 建议的最小数据库模型
+
+MVP 建议保留以下核心表：
+
+- `sessions`
+- `agents`
+- `tasks`
+- `messages`
+- `attachments`
+- `artifacts`
+- `tool_executions`
+- `llm_calls`
+- `checkpoints`
+- `memory_entries`
+
+其中最关键的是：
+
+- `sessions` 用于顶层生命周期管理
+- `tasks` 用于编排和恢复
+- `messages` 用于通信审计与可靠性
+- `llm_calls` / `tool_executions` 用于可观测与调试
+
+---
+
+## 10. 文档维护原则
+
+后续维护建议采用以下规则：
+
+- `functional-requirements.md` 是结构化唯一真相源
+- `requirements.md` 负责说明原因、边界和阶段划分
+- 同一个定义不要在两份文档里分别扩展成不同版本
+- 所有新增重要能力都应先明确：
+  - 是否属于 MVP
+  - 默认是否开启
+  - 是否影响状态机、安全边界或数据模型
+
+这样可以确保这份需求文档不仅“看起来完整”，也能直接支撑实现、排期和验收。
