@@ -8,14 +8,16 @@
 
 ## 一、核心域模型
 
-### 1.1 Session
+### 1.1 Planning / Execution / Roundtable Session
 
 | ID | 功能 | 描述 | 优先级 |
 |----|------|------|--------|
-| DM-001 | Session 作为顶层执行单元 | Session 统一承载用户目标、计划、任务、消息、附件、产物和统计 | P0 |
-| DM-002 | Session 元数据 | Session 至少包含 id/title/status/mode/user_id/config_snapshot | P0 |
-| DM-003 | Session 归档触发 | Session 结束后触发归档流程，保存摘要与关键产物引用 | P0 |
-| DM-004 | 高质量归档摘要 | Session 结束后生成更适合人阅读和检索的摘要 | P1 |
+| DM-001 | Planning Session | Web 端会话承载需求分析、Agent 讨论、方案确认与导出 | P0 |
+| DM-002 | Execution Session | CLI 端会话承载本地项目绑定、代码落地、验证与结果回传 | P0 |
+| DM-003 | Planning/Execution 关联 | Planning Session 与 Execution Session 通过 plan_id / execution_id 关联 | P0 |
+| DM-004 | Roundtable Session | 探索性讨论会话，用于发散思考与方案比较，不直接进入执行 | P1 |
+| DM-005 | Planning Session 归档触发 | 方案阶段结束后触发归档流程，保存摘要与关键产物引用 | P0 |
+| DM-006 | 高质量归档摘要 | 会话结束后生成更适合人阅读和检索的摘要 | P1 |
 
 ### 1.2 Task
 
@@ -25,13 +27,19 @@
 | DM-011 | Task 状态机 | 定义 PENDING/READY/ASSIGNED/RUNNING/BLOCKED/WAITING_APPROVAL/COMPLETED/FAILED/CANCELLED/SKIPPED | P0 |
 | DM-012 | Task 分配版本 | 通过 assignment_version 避免重复分配和重放造成的重复执行 | P1 |
 
-### 1.3 Message / Artifact
+### 1.3 Message / Artifact / Plan / Result
 
 | ID | 功能 | 描述 | 优先级 |
 |----|------|------|--------|
 | DM-020 | Message 最小可靠性字段 | Message 至少包含 message_id/seq/category/dedupe_key/ack_at/retry_count | P0 |
 | DM-021 | Attachment 模型 | 用户上传文件采用统一附件模型管理 | P0 |
-| DM-022 | Artifact 模型 | Agent 产出物采用统一产物模型管理，包含来源、路径、关联任务等元数据 | P1 |
+| DM-022 | Artifact 模型 | Agent 或 CLI 产出物采用统一产物模型管理，包含来源、路径、关联任务等元数据 | P0 |
+| DM-023 | Proposal 文档模型 | 方案文档 `proposal.md` 作为一等产物管理 | P0 |
+| DM-024 | Proposal 元数据 | Proposal 至少包含 proposal_id/session_id/title/status/version/generated_by | P1 |
+| DM-025 | Execution Plan 模型 | `execution_plan.json` 作为机器可执行计划模型管理 | P0 |
+| DM-026 | Execution Plan task 结构 | 执行计划中的 task 对象包含 owner_role/steps/validation_commands/done_definition 等字段 | P0 |
+| DM-027 | Execution Result 模型 | `execution_result.json` 作为执行结果对象管理 | P1 |
+| DM-028 | Validation Result 结构 | 验证结果对象包含 command/status/duration_ms/summary/log_ref 等字段 | P1 |
 
 ---
 
@@ -57,8 +65,12 @@
 | A-010 | 配置文件自动发现 | 扫描 agents/ 目录下 YAML 配置文件，自动加载 Agent | P0 |
 | A-011 | Agent Card 能力声明 | 每个 Agent 注册后广播 name/description/capabilities/skills/model/constraints | P0 |
 | A-012 | Leader 路由决策 | Leader 读取 Agent Card 进行任务分配路由 | P0 |
-| A-013 | Agent 退出处理 | 正常退出广播 SHUTDOWN，异常退出由 Monitor 超时检测 | P1 |
-| A-014 | 动态注册 | 运行中通过 API/CLI 动态添加新 Agent | P2 |
+| A-013 | Agent 模板 | 提供预置 Agent 模板，如 Researcher / Coder / Reviewer | P1 |
+| A-014 | Agent 模板元数据 | Agent 模板包含 role/goal/model/skills/capabilities/allowed_tools/participation_modes 等字段 | P1 |
+| A-015 | 自定义 Agent | 支持用户基于模板复制并创建自定义 Agent | P1 |
+| A-016 | Agent Skill 挂载 | 一个 Agent 可挂载多个 Skill，但仍受 Tool 与 constraints 限制 | P1 |
+| A-017 | Agent 退出处理 | 正常退出广播 SHUTDOWN，异常退出由 Monitor 超时检测 | P1 |
+| A-018 | 动态注册 | 运行中通过 API/CLI 动态添加新 Agent | P2 |
 
 ---
 
@@ -91,8 +103,9 @@
 | C-021 | 总线层强制拦截 | MVP 中仅 Leader 可发送 command 类型消息，其他 Agent 发送时直接拒绝 | P0 |
 | C-022 | 协作请求最小化 | Agent 间仅共享完成协作所需的最小上下文 | P0 |
 | C-023 | 协作不抢占主任务 | 协作请求不能抢占 Agent 当前主任务，只能轻量回复或排队 | P0 |
-| C-024 | 子团队委派 | Leader 将一组任务委派给子 Agent 管理（sub_leader） | P2 |
-| C-025 | 异步仲裁 | 冲突仲裁走独立异步队列，不阻塞正常通信 | P2 |
+| C-024 | Web→CLI 显式交付 | Web 与 CLI 通过计划对象和执行结果对象交付，不直接远控本地 shell | P0 |
+| C-025 | 子团队委派 | Leader 将一组任务委派给子 Agent 管理（sub_leader） | P2 |
+| C-026 | 异步仲裁 | 冲突仲裁走独立异步队列，不阻塞正常通信 | P2 |
 
 ---
 
@@ -126,8 +139,13 @@
 |----|------|------|--------|
 | S-001 | Markdown Skill | Skill 为 .md 文件，含 frontmatter（name/description/tools） | P0 |
 | S-002 | Skill 自动发现 | 扫描 skills/ 目录，自动加载 | P0 |
-| S-003 | 内置 Skill | 提供少量可复用的内置 Skill 模板 | P1 |
-| S-004 | Skill 热加载 | 运行中修改 Skill 文件自动生效 | P1 |
+| S-003 | 内置 Skill | 提供少量可复用的内置 Skill 模板 | P0 |
+| S-004 | Skill 元数据规范 | Skill frontmatter 包含 name/description/version/author/source/tools/output_format 等字段 | P0 |
+| S-005 | 用户自建 Skill | 支持用户创建和编辑团队内部 Skill | P1 |
+| S-006 | 外部 Skill 导入 | 支持从 GitHub 或团队共享来源导入 Skill | P1 |
+| S-007 | Skill 导入预览与审核 | 导入后展示来源、版本、所需 Tool 和风险，再由用户确认启用 | P1 |
+| S-008 | Skill 热加载 | 运行中修改 Skill 文件自动生效 | P1 |
+| S-009 | Skill 来源标记 | 记录 Skill 来源：builtin / custom / imported | P1 |
 
 ### 5.2 Tool
 
@@ -163,14 +181,17 @@
 |----|------|------|--------|
 | O-001 | LLM 驱动规划 | Leader 接收任务后进行拆解与分配建议 | P0 |
 | O-002 | 用户确认方案 | supervised 模式下，规划后展示方案给用户确认 | P0 |
-| O-003 | 动态调整 | 执行过程中 Leader 可根据结果动态调整任务分配 | P1 |
-| O-004 | 防死循环 | max_iterations 强制终止执行 | P0 |
-| O-005 | 串行任务执行 | MVP 以串行执行为主，保证状态和恢复逻辑简单可控 | P0 |
-| O-006 | Agent 独占式 | 每个 Agent 同时只处理一个主任务 | P0 |
-| O-007 | 可用 Agent 池 | Leader 维护空闲 Agent 池，优先分配可用 Agent | P0 |
-| O-008 | 预定义 Pipeline | 支持用户预定义流程约束（设计→开发→测试） | P1 |
-| O-009 | 规划缓存 | 常见规划可缓存为模板，减少 LLM 调用 | P2 |
-| O-010 | 并行 DAG 调度 | 无依赖步骤并行分配给不同 Agent | P2 |
+| O-003 | Proposal 导出 | 导出给人阅读的 `proposal.md` | P0 |
+| O-004 | Execution Plan 生成 | 生成给 CLI 执行的 `execution_plan.json` | P0 |
+| O-005 | Web→CLI 交付方式 | MVP 支持下载计划文件或生成 CLI 拉取命令 | P0 |
+| O-006 | 动态调整 | 执行过程中 Leader 可根据结果动态调整任务分配 | P1 |
+| O-007 | 防死循环 | max_iterations 强制终止执行 | P0 |
+| O-008 | 串行任务执行 | MVP 以串行执行为主，保证状态和恢复逻辑简单可控 | P0 |
+| O-009 | Agent 独占式 | 每个 Agent 同时只处理一个主任务 | P0 |
+| O-010 | 可用 Agent 池 | Leader 维护空闲 Agent 池，优先分配可用 Agent | P0 |
+| O-011 | 预定义 Pipeline | 支持用户预定义流程约束（设计→开发→测试） | P1 |
+| O-012 | 规划缓存 | 常见规划可缓存为模板，减少 LLM 调用 | P2 |
+| O-013 | 并行 DAG 调度 | 无依赖步骤并行分配给不同 Agent | P2 |
 
 ---
 
@@ -183,8 +204,10 @@
 | M-003 | DB 为 Source of Truth | Agent 运行时写 DB，Markdown 为摘要视图 | P0 |
 | M-004 | Agent 启动加载 | 启动时自动加载对应 Markdown 文件作为上下文 | P0 |
 | M-005 | 归档摘要同步 | Session 结束时将 DB 中关键信息整理为摘要同步到 Markdown | P1 |
-| M-006 | 数据库引擎切换 | SQLite（开发）↔ PostgreSQL+pgvector（生产） | P1 |
-| M-007 | Layer 3 向量检索 | 知识 embedding + 语义相似度搜索 | P2 |
+| M-006 | 记忆写入分层策略 | Planning/Execution/Roundtable 各自写入不同粒度的结论摘要，避免长原文直接沉淀 | P0 |
+| M-007 | 按需记忆检索 | 仅在规划复用、失败恢复等场景按需检索记忆 | P1 |
+| M-008 | 数据库引擎切换 | SQLite（开发）↔ PostgreSQL+pgvector（生产） | P1 |
+| M-009 | Layer 3 向量检索 | 知识 embedding + 语义相似度搜索 | P2 |
 
 ---
 
@@ -199,8 +222,13 @@
 | X-005 | 输入分层压缩 | System Prompt / 当前任务 / 最近对话优先，其他内容摘要化 | P0 |
 | X-006 | 滑动窗口+摘要 | 用摘要替代早期对话历史 | P0 |
 | X-007 | CLI 长输出折叠 | 超过阈值的 CLI 输出默认折叠显示 | P1 |
-| X-008 | 输出格式自适应 | 代码/表格/报告以更适合的方式展示或保存 | P1 |
-| X-009 | 流式截断恢复 | Stream 中断后恢复续传 | P2 |
+| X-008 | Web 长输出折叠 | Web 端长内容默认折叠，先展示摘要和逻辑分段 | P1 |
+| X-009 | 聊天长回复结构化 | 超过阈值的聊天回复必须自动分节，避免无结构纯文本墙 | P0 |
+| X-010 | 输出格式自适应 | 代码/表格/报告以更适合的方式展示或保存 | P1 |
+| X-011 | Execution Plan 最小上下文 | CLI 主要消费结构化执行计划，而不是完整对话历史 | P0 |
+| X-012 | Roundtable 每轮摘要 | 每轮讨论结束自动生成摘要，限制原始长对话持续累积 | P0 |
+| X-013 | 截断状态可观测 | 记录输出是否截断、是否自动续写、最终是否完整 | P1 |
+| X-014 | 流式截断恢复 | Stream 中断后恢复续传 | P2 |
 
 ---
 
@@ -208,12 +236,14 @@
 
 | ID | 功能 | 描述 | 优先级 |
 |----|------|------|--------|
-| I-001 | 任务模式 | 用户→Leader 编排→Agent 团队执行 | P0 |
-| I-002 | 单聊模式 | 用户直接与指定 Agent 对话 | P0 |
-| I-003 | 圆桌模式 | 多 Agent 自由讨论，无 Leader 编排 | P2 |
-| I-004 | 圆桌轮数限制 | max_rounds 到达后自动结束 | P2 |
-| I-005 | 圆桌共识检测 | LLM 判断是否达成共识 | P2 |
-| I-006 | 模式转换 | 圆桌结论转为正式任务执行 | P2 |
+| I-001 | Web 规划模式 | 用户通过 Web 与 Agent 团队讨论和生成方案 | P0 |
+| I-002 | 本地执行模式 | 开发者通过 CLI 执行本地项目开发任务 | P0 |
+| I-003 | 单聊模式 | 用户直接与指定 Agent 对话 | P1 |
+| I-004 | 轻量圆桌模式 | 多 Agent 进行受控探索性讨论，默认轮数受限并产出摘要 | P1 |
+| I-005 | 圆桌轮数限制 | max_rounds 到达后自动结束 | P1 |
+| I-006 | 圆桌共识检测 | LLM 判断是否达成共识 | P2 |
+| I-007 | 模式转换 | 讨论结论转为正式执行计划 | P0 |
+| I-008 | 圆桌直达执行限制 | 圆桌结果不能直接触发 Execution Session，需先转为 Planning Session 结论 | P0 |
 
 ---
 
@@ -242,8 +272,10 @@
 | F-005 | Checkpoint（Tool 级） | debug_mode 下记录细粒度 Tool 执行过程 | P2 |
 | F-006 | Leader 状态持久化 | Plan、任务分配、执行进度写入 DB | P1 |
 | F-007 | Leader 崩溃恢复 | 重启后从 DB 恢复 Session 状态 | P1 |
-| F-008 | 三级错误分级 | fatal / recoverable / warning | P0 |
-| F-009 | 用户友好错误提示 | 格式化提示 + 可操作建议 | P0 |
+| F-008 | CLI 执行结果保留 | 本地执行失败时保留改动摘要、日志和验证结果 | P0 |
+| F-009 | 截断后自动续写 | 在有限次数内自动恢复被截断的输出 | P1 |
+| F-010 | 三级错误分级 | fatal / recoverable / warning | P0 |
+| F-011 | 用户友好错误提示 | 格式化提示 + 可操作建议 | P0 |
 
 ---
 
@@ -251,14 +283,17 @@
 
 | ID | 功能 | 描述 | 优先级 |
 |----|------|------|--------|
-| SS-001 | Session 创建 | 创建 Session，关联用户和 Agent | P0 |
-| SS-002 | Session 状态机 | CREATED→PLANNING→AWAITING_APPROVAL→EXECUTING↔PAUSED→COMPLETED/FAILED/CANCELLED | P0 |
-| SS-003 | Session 取消 | 用户主动取消正在执行的 Session | P0 |
-| SS-004 | Session 自动标题 | LLM 自动生成 Session 标题 | P1 |
-| SS-005 | Session 暂停/恢复 | 暂停后释放资源，恢复时从 checkpoint 继续 | P2 |
-| SS-006 | 活跃超时 | 4h 无操作自动暂停 | P2 |
-| SS-007 | 暂停超时归档 | 暂停 24h 后自动归档 | P2 |
-| SS-008 | 多 Session 并发 | 同一用户同时运行多个 Session | P2 |
+| SS-001 | Planning Session 创建 | 创建 Web 侧分析与规划会话 | P0 |
+| SS-002 | Planning Session 状态机 | CREATED→PLANNING→AWAITING_APPROVAL→READY_FOR_EXPORT→COMPLETED/FAILED/CANCELLED | P0 |
+| SS-003 | Execution Session 创建 | 创建 CLI 侧本地执行会话 | P0 |
+| SS-004 | Execution Session 状态机 | CREATED→READY→EXECUTING↔PAUSED→COMPLETED/FAILED/CANCELLED | P0 |
+| SS-005 | Roundtable Session 创建 | 创建探索性讨论会话 | P1 |
+| SS-006 | Roundtable 状态机 | CREATED→DISCUSSING→SUMMARIZING→COMPLETED/FAILED/CANCELLED | P1 |
+| SS-007 | Session 取消 | 用户主动取消 Planning、Execution 或 Roundtable Session | P0 |
+| SS-008 | Session 自动标题 | 自动生成 Session 标题 | P1 |
+| SS-009 | Session 暂停/恢复 | 暂停后释放资源，恢复时从 checkpoint 继续 | P2 |
+| SS-010 | 活跃超时 | 无操作自动暂停或过期 | P2 |
+| SS-011 | 多 Session 并发 | 同一用户同时运行多个 Session | P2 |
 
 ---
 
@@ -266,16 +301,18 @@
 
 | ID | 功能 | 描述 | 优先级 |
 |----|------|------|--------|
-| UF-001 | CLI 路径引用 | 消息中引用本地文件路径 | P0 |
-| UF-002 | /attach 命令 | 显式附加文件 + glob 批量 | P0 |
-| UF-003 | 文件大小限制 | 单文件 50MB / Session 总 500MB | P0 |
-| UF-004 | 格式白/黑名单 | 允许/禁止的文件扩展名 | P0 |
-| UF-005 | Message 附件模型 | Message 中 attachments 字段 + Attachment 数据结构 | P0 |
-| UF-006 | Agent 输出文件交付 | 生成文件保存到 outputs/ 并展示路径 | P1 |
-| UF-007 | 上传文件清理 | retention_days 到期自动清理 | P2 |
-| UF-008 | CLI 剪贴板粘贴 | 截图后粘贴，自动保存到 uploads/ | P2 |
-| UF-009 | Web 拖拽/点击/粘贴上传 | Web 端文件上传与预览 | P2 |
-| UF-010 | 智能多模态路由 | 图片或文档自动路由到支持对应能力的模型 | P2 |
+| UF-001 | Web 需求文件上传 | Web 中上传需求说明、截图、文档等输入文件 | P0 |
+| UF-002 | Proposal 导出 | 导出 `proposal.md` | P0 |
+| UF-003 | Execution Plan 导出 | 导出 `execution_plan.json` | P0 |
+| UF-004 | CLI 导入执行计划 | CLI 可导入计划文件并开始执行 | P0 |
+| UF-005 | CLI 计划拉取命令 | Web 可生成供本地 CLI 执行的拉取命令 | P1 |
+| UF-006 | 文件大小限制 | 单文件 50MB / Session 总 500MB | P0 |
+| UF-007 | 格式白/黑名单 | 允许/禁止的文件扩展名 | P0 |
+| UF-008 | Message 附件模型 | Message 中 attachments 字段 + Attachment 数据结构 | P0 |
+| UF-009 | 执行结果文件导出 | CLI 生成执行报告和结果文件 | P1 |
+| UF-010 | 上传文件清理 | retention_days 到期自动清理 | P2 |
+| UF-011 | Web 富上传体验 | 拖拽/点击/粘贴上传与预览 | P2 |
+| UF-012 | 智能多模态路由 | 图片或文档自动路由到支持对应能力的模型 | P2 |
 
 ---
 
@@ -285,7 +322,7 @@
 |----|------|------|--------|
 | SC-001 | 命令黑名单 | rm -rf、mkfs 等破坏性命令默认拦截 | P0 |
 | SC-002 | safe_mode | 默认仅允许白名单命令，其他命令需确认 | P0 |
-| SC-003 | 工作目录限制 | Agent 只能在指定项目目录内操作 | P0 |
+| SC-003 | 工作目录限制 | CLI/Agent 只能在指定项目目录内操作 | P0 |
 | SC-004 | 路径穿越防护 | 拒绝 ../ 和符号链接逃逸 | P0 |
 | SC-005 | 敏感文件保护 | .env、id_rsa 等默认禁止读写 | P0 |
 | SC-006 | 安全配置收紧原则 | 低层配置只能收紧高层安全限制，不能放宽 | P0 |
@@ -303,15 +340,18 @@
 
 | ID | 功能 | 描述 | 优先级 |
 |----|------|------|--------|
-| OB-001 | Agent 实时状态 | 空闲/执行中/等待中 | P0 |
-| OB-002 | 任务整体进度 | 待做/进行中/已完成 | P0 |
-| OB-003 | 关键消息展示 | 展示关键消息流和状态变化 | P1 |
-| OB-004 | Tool 执行元数据 | 记录 Tool 名称、耗时、是否成功等元数据 | P0 |
-| OB-005 | LLM 调用元数据 | 记录模型、Token、耗时、成本等元数据 | P0 |
-| OB-006 | 分级日志 | DEBUG/INFO/WARN/ERROR，按 Session/Agent/任务筛选 | P0 |
-| OB-007 | 结构化日志 | JSON 格式，支持外部日志系统接入 | P1 |
-| OB-008 | 用量统计展示 | 展示按用户/Agent/模型维度聚合的 Token 和成本数据 | P1 |
-| OB-009 | 运行时日志级别调整 | 支持运行时调整日志级别 | P1 |
+| OB-001 | Planning Session 状态 | 展示方案阶段状态 | P0 |
+| OB-002 | Execution Session 状态 | 展示本地执行阶段状态 | P0 |
+| OB-003 | Roundtable 状态 | 展示探索性讨论状态和轮次 | P1 |
+| OB-004 | 任务整体进度 | 待做/进行中/已完成 | P0 |
+| OB-005 | 关键消息展示 | 展示关键消息流和状态变化 | P1 |
+| OB-006 | Tool 执行元数据 | 记录 Tool 名称、耗时、是否成功等元数据 | P0 |
+| OB-007 | LLM 调用元数据 | 记录模型、Token、耗时、成本等元数据 | P0 |
+| OB-008 | CLI 执行结果展示 | 展示本地修改、验证结果和错误摘要 | P0 |
+| OB-009 | 截断与续写记录 | 展示输出是否截断、是否续写、最终是否完整 | P1 |
+| OB-010 | 分级日志 | DEBUG/INFO/WARN/ERROR，按 Session/Agent/任务筛选 | P0 |
+| OB-011 | 结构化日志 | JSON 格式，支持外部日志系统接入 | P1 |
+| OB-012 | 用量统计展示 | 展示按用户/Agent/模型维度聚合的 Token 和成本数据 | P1 |
 
 ---
 
@@ -337,11 +377,11 @@
 |----|------|------|--------|
 | G-001 | Git 只读状态检查 | 支持获取当前工作树状态和差异信息 | P1 |
 | G-002 | 自动 Commit | 每完成一步自动 commit | P2 |
-| G-003 | Session 分支 | 每个 Session 创建独立分支 | P2 |
+| G-003 | Session 分支 | 每个 Execution Session 创建独立分支 | P2 |
 | G-004 | 保护分支 | 禁止直接 push 到 main/master | P2 |
 | G-005 | 禁止 force push | 禁止 git push --force | P2 |
 | G-006 | Agent 间冲突处理 | Leader 仲裁指定 Agent 负责合并 | P2 |
-| G-007 | 与人类冲突处理 | 暂停 Agent，通知用户手动解决 | P2 |
+| G-007 | 与人类冲突处理 | 暂停执行，通知用户手动解决 | P2 |
 
 ---
 
@@ -349,12 +389,14 @@
 
 | ID | 功能 | 描述 | 优先级 |
 |----|------|------|--------|
-| U-001 | 用户级 LLM Key | 每个用户配置自己的 API Key | P1 |
-| U-002 | 账号密码认证 | 基础认证方式 | P2 |
-| U-003 | API Key 认证 | 方便程序调用 | P2 |
-| U-004 | 数据隔离 | 每个用户数据完全独立 | P2 |
-| U-005 | 团队模式 | 多用户共享项目空间 | P2 |
-| U-006 | OAuth 登录 | 第三方登录 | P2 |
+| U-001 | 面向非开发角色可用 | Web 端可被产品、测试等非开发角色直接使用 | P0 |
+| U-002 | 开发者本地执行 | 开发者通过 CLI 落地本地项目开发 | P0 |
+| U-003 | 用户级 LLM Key | 每个用户配置自己的 API Key | P1 |
+| U-004 | 账号密码认证 | 基础认证方式 | P2 |
+| U-005 | API Key 认证 | 方便程序调用 | P2 |
+| U-006 | 数据隔离 | 每个用户数据完全独立 | P2 |
+| U-007 | 团队模式 | 多用户共享项目空间 | P2 |
+| U-008 | OAuth 登录 | 第三方登录 | P2 |
 
 ---
 
@@ -383,13 +425,31 @@
 
 ---
 
-## 二十一、CLI 交互
+## 二十一、Web 与 CLI 交互
 
 | ID | 功能 | 描述 | 优先级 |
 |----|------|------|--------|
-| CLI-001 | 交互式 REPL | 类似 Claude Code 的会话模式 | P0 |
-| CLI-002 | 命令模式 | `agent-team run "任务描述"` 非交互执行 | P0 |
-| CLI-003 | 基础状态展示 | 展示当前 Agent 状态和整体进度 | P0 |
+| WC-001 | Web 主入口 | 用户主要通过 Web 提问、分析需求、确认方案 | P0 |
+| WC-002 | CLI 本地执行器 | CLI 负责本地仓库开发执行和验证 | P0 |
+| WC-003 | 聊天输出默认 Markdown | 所有用户可见对话输出默认采用 Markdown 结构化格式 | P0 |
+| WC-004 | Web Markdown 渲染 | Web 端对聊天消息中的标题、列表、表格、代码块、引用进行渲染 | P0 |
+| WC-005 | CLI Markdown 语义渲染 | CLI 使用 Rich 等方式渲染 Markdown 语义，而不是输出纯文本墙 | P1 |
+| WC-006 | CLI 导入计划 | `agent-team apply <execution_plan.json>` 本地执行计划 | P0 |
+| WC-007 | CLI 拉取计划 | 通过 plan_id 从服务端拉取执行计划 | P1 |
+| WC-008 | 执行结果回传 | CLI 将执行状态、日志和摘要回传 Web | P1 |
+| WC-009 | CLI 本地继续交互 | 执行计划后允许少量本地交互修正 | P1 |
+| WC-010 | CLI 常驻接单 | CLI 登录后自动接收远程任务 | P2 |
+| WC-011 | Web 实时控制本地 CLI | Web 直接实时操控本地执行器 | P2 |
+
+---
+
+## 二十二、CLI 交互
+
+| ID | 功能 | 描述 | 优先级 |
+|----|------|------|--------|
+| CLI-001 | apply 命令 | 导入执行计划并在本地仓库执行 | P0 |
+| CLI-002 | pull-plan 命令 | 通过 plan_id 拉取执行计划 | P1 |
+| CLI-003 | 基础状态展示 | 展示当前执行状态和验证结果 | P0 |
 | CLI-004 | init 初始化向导 | 交互式选择项目类型/Provider/模板 | P1 |
 | CLI-005 | 团队模板 | software-dev / data-analysis / content-creation / minimal | P1 |
 | CLI-006 | debug prompt | 查看 Agent 发给 LLM 的完整 Prompt | P1 |
@@ -406,6 +466,6 @@
 
 | 优先级 | 说明 |
 |--------|------|
-| **P0** | MVP 闭环必须具备，优先保证状态、边界和可执行性 |
-| **P1** | 提升可用性、可调试性和工程体验 |
+| **P0** | MVP 闭环必须具备，优先保证 Web 规划、计划导出、记忆收敛和 CLI 本地执行这条主链路 |
+| **P1** | 提升可用性、可调试性、圆桌辅助能力和 Web/CLI 协同体验 |
 | **P2** | 第二阶段扩展能力，不进入 MVP 默认路径 |
