@@ -1,0 +1,49 @@
+# Team Agent Configuration
+# Per requirements: YAML + Pydantic configuration system (CF-001, A-010)
+
+# Governance config: can only be tightened at lower levels, not relaxed
+governance:
+  safe_mode: false
+  command_blacklist:
+    - "rm -rf /"
+    - "rm -rf ~"
+    - "mkfs"
+    - "dd if=/dev/zero"
+    - ":(){ :|:& };:"
+    - "chmod -R 777 /"
+    - "chown -R"
+    - "> /dev/sda"
+    - "mv / /dev/null"
+  protected_paths:
+    - /etc
+    - /root
+    - ~/.ssh
+    - /var
+    - /sys
+    - /proc
+  sensitive_file_patterns:
+    - .env
+    - "*.key"
+    - "*.pem"
+    - "*.p12"
+    - "*.pfx"
+    - id_rsa
+    - id_ed25519
+    - credentials.json
+    - "service-account*.json"
+  max_command_timeout: 300
+  auto_approve: false
+  high_risk_requires_approval: true
+
+# Behavior config: can be overridden per layer
+behavior:
+  # default_model: "gpt-4o-mini"  # Uncomment to override
+  # planning_model: "gpt-4o"       # Uncomment to override
+  # execution_model: "gpt-4o-mini" # Uncomment to override
+  fallback_chain: []
+  session_budget_usd: 10.0
+  stream: true
+  temperature: 0.7
+  max_tokens: 4096
+  max_continuation_rounds: 3
+  max_roundtable_rounds: 5

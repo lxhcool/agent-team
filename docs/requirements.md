@@ -920,43 +920,74 @@ Git 相关建议：
 
 ### 7.1 MVP 建议技术栈
 
-#### Web 与服务端
+#### 后端与编排层
+
+MVP 后端建议统一使用 Python 技术栈，先把规划、状态管理和协议生成跑通：
 
 - Python 3.12
 - FastAPI
-- Server-Sent Events 或 WebSocket（二选一，优先选实现更简单的实时推送方式）
-
-#### Web 前端
-
-- Next.js + React + TypeScript
-- Tailwind CSS
-- 轻量组件库（如 shadcn/ui）
-
-#### 本地 CLI
-
-- Typer + Rich
-  - CLI 负责导入/拉取计划、执行本地开发、输出执行摘要
-
-#### 配置与数据模型
-
 - Pydantic v2
-- PyYAML
-
-#### 持久化
-
-- SQLAlchemy 2.0 或 SQLModel
+- SQLAlchemy 2.0
 - SQLite
-  - 先以单文件数据库承载 Planning Session、Execution Session、Task、Message、LLM Call、Tool Execution
-
-#### 并发与调度
-
 - `asyncio`
 - `InMemoryMessageBus`
 
-#### 质量保障
+后端职责边界：
+
+- FastAPI 负责 Web API、SSE 和 Session 生命周期接口
+- Orchestrator 负责 Planning Session、Task 编排和 Proposal / Plan 生成
+- Agent Runtime 负责 Leader / Worker 生命周期和消息分发
+- SQLite 负责承载 MVP 阶段的 Session、Task、Message、Artifact、LLM Call、Tool Execution
+
+实时推送建议：
+
+- MVP 优先采用 SSE
+- 只有在确实需要双向实时控制时再升级到 WebSocket
+
+#### Web 前端
+
+Web 前端应优先服务“提需求 -> 看分析 -> 确认方案 -> 导出计划 -> 查看结果”这条主链路，建议技术栈如下：
+
+- Next.js
+- React
+- TypeScript
+- Tailwind CSS
+- shadcn/ui 或同级轻量组件库
+- Markdown 渲染组件
+
+前端职责边界：
+
+- 需求输入与会话列表
+- 聊天区 Markdown 渲染
+- Proposal 展示与导出
+- Execution Plan 展示与下载
+- Execution Result 摘要展示
+- 审批、取消、状态查看
+
+#### 本地 CLI
+
+CLI 是本地执行器，建议保持 Python 技术栈一致，降低协议和模型复用成本：
+
+- Typer
+- Rich
+- Pydantic v2
+- PyYAML
+
+CLI 负责：
+
+- `apply` 导入本地 `execution_plan.json`
+- `pull-plan` 按 `plan_id` 拉取计划
+- 绑定本地项目目录
+- 调用 `LocalWorkspace` 改文件和执行命令
+- 输出 `execution_result.json`
+- 以 Rich 渲染结构化执行摘要，而不是纯文本墙
+
+#### 质量保障与工程基础
 
 - pytest
 - ruff
+- 统一 JSON 协议模型
+- 统一 Markdown 产物模板
 
 ### 7.2 第二阶段建议
 
@@ -964,8 +995,8 @@ Git 相关建议：
 
 - PostgreSQL + pgvector
 - Redis Streams 或 NATS
+- WebSocket 实时双向同步
 - 本地 CLI 登录接单
-- Web 与 CLI 的实时任务同步
 - Docker 隔离执行
 - 插件系统
 - 多模态解析链路
@@ -987,7 +1018,7 @@ Git 相关建议：
 
 ---
 
-## 8. MVP 范围与里程碑
+## 8. MVP 范围、开发顺序与里程碑
 
 ### 8.1 MVP 必须跑通的闭环
 
@@ -1026,7 +1057,40 @@ MVP 必须实现：
 - Docker 沙箱
 - 外部通知和 MCP
 
-### 8.3 建议里程碑
+### 8.3 推荐开发顺序
+
+建议按以下顺序进入实现，先把协议和状态机打稳，再补 UI 和执行能力：
+
+1. **后端骨架**
+   - FastAPI
+   - SQLite
+   - SQLAlchemy models
+   - Planning Session / Execution Session / Artifact 基础表
+2. **规划链路**
+   - LeaderAgent
+   - 最小 Agent Runtime
+   - SkillRegistry
+   - Proposal 生成
+   - Execution Plan 生成
+3. **Web MVP**
+   - 需求输入
+   - 聊天 Markdown 展示
+   - Proposal 展示
+   - Execution Plan 下载
+4. **CLI MVP**
+   - `apply`
+   - `pull-plan`
+   - `LocalWorkspace`
+   - task 执行与验证命令
+   - `execution_result.json` 输出
+5. **结果回传与打磨**
+   - 执行结果回传 API
+   - Web 结果摘要展示
+   - 错误提示
+   - 截断恢复
+   - 基础 debug 命令
+
+### 8.4 建议里程碑
 
 | 里程碑 | 目标 | 核心交付 |
 |--------|------|----------|
@@ -1035,6 +1099,21 @@ MVP 必须实现：
 | M3 | 跑通本地执行链路 | CLI 导入计划、绑定项目、执行修改 |
 | M4 | 跑通验证与回传 | 测试/lint/build 结果、执行摘要 |
 | M5 | 打磨安全、记忆与可观测性 | 日志、错误提示、审批、截断恢复、基础调试 |
+
+### 8.5 是否可以进入开发阶段
+
+结论：可以。
+
+当前已经具备进入实现阶段的最低条件：
+
+- 产品主形态已经收敛为 Web 主导 + 本地 CLI 执行
+- MVP 主链路已经明确
+- Planning / Execution / Roundtable 的边界已经清晰
+- Session、Task、Message、Artifact、Plan、Result 协议已经明确
+- 前端、后端、CLI 的技术栈已经收敛
+- 明确有一条可执行的推荐开发顺序
+
+从现在开始，继续扩需求的边际收益已经明显下降，更合理的动作是开始搭建代码骨架并推进 MVP 主链路实现。
 
 ---
 

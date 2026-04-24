@@ -64,6 +64,9 @@ MVP 建议拆成以下模块。
 - 导出 `proposal.md`
 - 展示可执行计划
 - 展示执行结果摘要
+- 模型与 Provider 配置
+- Agent 模板与 Skill 管理
+- 用量统计展示
 
 建议技术：
 - Next.js
@@ -71,6 +74,41 @@ MVP 建议拆成以下模块。
 - TypeScript
 - Tailwind CSS
 - Markdown 渲染组件
+
+#### 页面结构
+
+| 页面 | 路由 | 优先级 | 职责 |
+|------|------|--------|------|
+| 会话列表 | `/` | P0 | 展示历史 Planning Session / Roundtable 列表，快速新建会话 |
+| Planning 工作区 | `/sessions/:id` | P0 | 聊天区 + Agent 讨论展示 + 方案确认 + Proposal / Plan 导出 + 审批入口 |
+| 执行结果详情 | `/execution/:id` | P1 | 查看 CLI 执行状态、改动文件列表、验证结果、执行日志摘要 |
+| 模型设置 | `/settings/models` | P0 | 配置 Provider、API Key、默认模型、Fallback 链、预算上限 |
+| Agent 管理 | `/settings/agents` | P1 | 查看/创建 Agent 模板，配置挂载 Skill、模型、约束 |
+| Skill 管理 | `/settings/skills` | P1 | 查看内置/自建/导入 Skill，导入预览与审核启用 |
+| 用量统计 | `/usage` | P1 | 按 Session / Agent / 模型维度查看 Token 消耗和费用估算 |
+| 圆桌工作区 | `/roundtable/:id` | P1 | 多 Agent 受控讨论 + 每轮摘要 + 转为 Planning Session |
+| 安全配置 | `/settings/security` | P2 | safe_mode、命令黑名单、路径限制、敏感文件保护规则 |
+
+#### 模型设置页核心内容
+
+模型设置是用户使用系统的前提条件（用户自带 API Key），该页面至少需要：
+
+- **Provider 管理**：
+  - 内置预设：OpenAI / Anthropic / Google
+  - 自定义 Provider：通过 `base_url + api_key` 接入任意 OpenAI 兼容 API 的第三方模型服务（硅基流动、DeepSeek、月之暗面、零一万物、Ollama 本地模型等）
+  - 每个 Provider 可配置多个模型
+- **API Key 配置**：每个 Provider 填写自己的 Key，加密存储
+- **默认模型选择**：全局默认模型、Planning 场景默认模型、Execution 场景默认模型
+- **Fallback 链配置**：主模型失败后自动切换的备用模型列表（可跨 Provider）
+- **预算设置**：Session 级 Token 或金额上限，超限自动暂停
+
+#### Planning 工作区布局建议
+
+工作区是用户最常驻的页面，建议分为以下区域：
+
+- **左侧栏**：会话内 Task 列表与状态
+- **中间主区**：聊天对话流（Markdown 渲染），含 Agent 标签和分色
+- **右侧栏**：Proposal 预览 / Execution Plan 预览（按阶段切换）
 
 ### 3.2 `api-server`
 
@@ -138,11 +176,19 @@ MVP 建议拆成以下模块。
 - fallback / retry
 - token 统计
 - 流式输出与结构化输出支持
+- 支持任意 OpenAI 兼容 API 的第三方模型服务
 
 核心对象：
 - `LLMProvider`
 - `LLMRouter`
 - `ProviderAdapter`
+- `CustomProviderConfig`
+
+设计原则：
+- 所有 Provider 统一走 OpenAI Chat Completions 兼容协议
+- 内置预设 Provider（OpenAI / Anthropic / Google）提供开箱即用体验
+- 第三方模型服务（硅基流动、DeepSeek、月之暗面、零一万物等）通过 `base_url + api_key + model_name` 配置接入，无需代码改动
+- 自定义 Provider 与内置 Provider 在路由、Fallback、Token 统计等方面完全平等
 
 ### 3.7 `artifact-service`
 
@@ -465,14 +511,41 @@ MVP 建议至少保留以下表。
 - `POST /api/agent-templates`
   - 创建自定义 Agent 模板
 
-### 7.5 Execution Results
+### 7.5 Settings
+
+- `GET /api/settings/models`
+  - 获取当前模型配置（Provider 列表、默认模型、Fallback 链、预算）
+- `PUT /api/settings/models`
+  - 更新模型配置
+- `POST /api/settings/models/test`
+  - 测试 Provider 连通性（验证 API Key 是否有效、base_url 是否可达）
+- `PUT /api/settings/models/providers/{provider_name}/api-key`
+  - 设置指定 Provider 的 API Key（加密存储）
+- `POST /api/settings/models/providers`
+  - 添加自定义 Provider（base_url + api_key + display_name）
+- `PUT /api/settings/models/providers/{provider_name}`
+  - 更新自定义 Provider 配置
+- `DELETE /api/settings/models/providers/{provider_name}`
+  - 删除自定义 Provider（内置 Provider 不可删除）
+- `GET /api/settings/models/providers/{provider_name}/models`
+  - 拉取 Provider 下可用模型列表（调用远程 /models 接口或手动配置）
+- `GET /api/settings/security`
+  - 获取安全配置（safe_mode、黑名单、路径限制）
+- `PUT /api/settings/security`
+  - 更新安全配置
+- `GET /api/usage`
+  - 获取用量统计（支持按 Session / Agent / 模型维度聚合）
+- `GET /api/usage/sessions/{id}`
+  - 获取指定 Session 的 Token 和费用明细
+
+### 7.6 Execution Results
 
 - `POST /api/execution-results`
   - CLI 回传执行结果
 - `GET /api/execution-results/{plan_id}`
   - Web 查询执行结果
 
-### 7.6 实时推送
+### 7.7 实时推送
 
 MVP 建议只做一种：
 - SSE 或 WebSocket
@@ -552,7 +625,48 @@ safety_notes: read-only planning skill
 ---
 ```
 
-### 9.2 Agent Template 示例
+### 9.2 Custom Provider Config 示例
+
+```json
+{
+  "provider_name": "siliconflow",
+  "display_name": "硅基流动",
+  "base_url": "https://api.siliconflow.cn/v1",
+  "api_key": "sk-xxx",
+  "api_type": "openai_compatible",
+  "models": [
+    {
+      "model_id": "deepseek-ai/DeepSeek-V3",
+      "display_name": "DeepSeek V3",
+      "context_window": 65536,
+      "pricing": {
+        "prompt_per_million": 1.0,
+        "completion_per_million": 2.0,
+        "currency": "CNY"
+      }
+    },
+    {
+      "model_id": "Qwen/Qwen2.5-72B-Instruct",
+      "display_name": "Qwen2.5-72B",
+      "context_window": 32768,
+      "pricing": {
+        "prompt_per_million": 4.0,
+        "completion_per_million": 4.0,
+        "currency": "CNY"
+      }
+    }
+  ],
+  "default_model": "deepseek-ai/DeepSeek-V3"
+}
+```
+
+设计说明：
+- `api_type` 默认为 `openai_compatible`，表示走 OpenAI Chat Completions 兼容协议
+- 内置 Provider（OpenAI / Anthropic / Google）可使用各自的专有协议适配器
+- `pricing` 为可选字段，用于成本估算，用户也可不填
+- 支持人民币 / 美元等多种货币的定价
+
+### 9.3 Agent Template 示例
 
 ```json
 {
@@ -571,7 +685,7 @@ safety_notes: read-only planning skill
 }
 ```
 
-### 9.3 Execution Plan 示例结构
+### 9.4 Execution Plan 示例结构
 
 ```json
 {
@@ -624,10 +738,10 @@ safety_notes: read-only planning skill
 - Execution Plan 生成
 
 ### 阶段 3：Web MVP
-- 输入需求
-- 显示聊天 Markdown
-- 展示 Proposal
-- 下载 Execution Plan
+- 会话列表页 `/`
+- Planning 工作区 `/sessions/:id`（聊天 Markdown + 方案展示 + 导出）
+- 模型设置页 `/settings/models`（Provider + API Key + 默认模型 + Fallback）
+- Execution Plan 下载
 
 ### 阶段 4：CLI MVP
 - `apply`
