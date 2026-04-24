@@ -195,6 +195,7 @@ async def send_message(
         _running_planning_tasks[session_id] = task
 
     return MessageResponse(
+        id=msg.id,
         seq=msg.seq,
         sender=msg.sender,
         sender_display=DISPLAY_NAMES.get(msg.sender, msg.sender),

@@ -1,11 +1,17 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import Link from "next/link";
 import {
-  Pencil, Trash2, Plus, Loader2, Shield, Zap, X, Bot, ChevronRight
+  Pencil, Trash2, Plus, Loader2, Shield, Zap, X, Bot, RefreshCw, ImagePlus
 } from "lucide-react";
 import { TopNav } from "../../components/topnav";
+import { Button } from "@/components/ui/button";
+import {
+  Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+} from "@/components/ui/dialog";
 
 type SkillRef = { name: string; display_name?: string };
 
@@ -27,11 +33,12 @@ type Skill = {
   source_type: string; recommended_for: string[];
 };
 
-type NewAgentForm = {
+type AgentForm = {
   name: string; display_name: string; role: string;
   goal: string; system_prompt: string; model: string; provider: string;
   constraints: string; participation_modes: string[];
   risk_level: string; skills: SkillRef[];
+  avatar_seed: string;
 };
 
 const ROLE_OPTIONS = [
@@ -44,23 +51,41 @@ const ROLE_OPTIONS = [
   { value: "custom", label: "自定义" },
 ];
 
-const RISK_COLORS: Record<string, string> = { low: "var(--success)", medium: "var(--warning)", high: "var(--danger)" };
-const RISK_LABELS: Record<string, string> = { low: "低风险", medium: "中风险", high: "高风险" };
+const RISK_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
+  low: { label: "低风险", color: "#16a34a", bg: "rgba(22,163,74,0.06)" },
+  medium: { label: "中风险", color: "#d97706", bg: "rgba(217,119,6,0.06)" },
+  high: { label: "高风险", color: "#dc2626", bg: "rgba(220,38,38,0.06)" },
+};
+
 const MODE_LABELS: Record<string, string> = { planning: "Planning", execution: "Execution", roundtable: "圆桌讨论" };
+
+const emptyForm: AgentForm = {
+  name: "", display_name: "", role: "custom", goal: "", system_prompt: "",
+  model: "", provider: "", constraints: "", participation_modes: ["planning"],
+  risk_level: "low", skills: [], avatar_seed: "",
+};
+
+const generateSeed = () => Math.random().toString(36).slice(2, 10);
+
+const avatarUrl = (seed: string) =>
+  seed ? `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(seed)}` : "";
+
+const ROLE_COLORS: Record<string, string> = {
+  coordinator: "#6366f1", architect: "#8b5cf6", developer: "#3b82f6",
+  reviewer: "#f59e0b", tester: "#10b981", analyst: "#ec4899", custom: "#64748b",
+};
 
 export default function AgentsPage() {
   const [agents, setAgents] = useState<AgentTemplate[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showCreate, setShowCreate] = useState(false);
-  const [editingAgent, setEditingAgent] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState<Partial<AgentTemplate> & { skills?: SkillRef[] }>({});
+
+  // Dialog state
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialogMode, setDialogMode] = useState<"create" | "edit">("create");
+  const [editingName, setEditingName] = useState<string | null>(null);
+  const [form, setForm] = useState<AgentForm>(emptyForm);
   const [saving, setSaving] = useState(false);
-  const [newAgent, setNewAgent] = useState<NewAgentForm>({
-    name: "", display_name: "", role: "custom", goal: "", system_prompt: "",
-    model: "", provider: "", constraints: "", participation_modes: ["planning"],
-    risk_level: "low", skills: [],
-  });
 
   const fetchAgents = useCallback(async () => {
     try { const res = await fetch("/api/settings/agents"); setAgents(await res.json() || []); } catch {} finally { setLoading(false); }
@@ -71,26 +96,65 @@ export default function AgentsPage() {
 
   useEffect(() => { fetchAgents(); fetchSkills(); }, [fetchAgents, fetchSkills]);
 
-  const toggleSkillInNew = (skill: Skill) => {
-    const exists = newAgent.skills.some((s) => s.name === skill.name);
-    setNewAgent({ ...newAgent, skills: exists ? newAgent.skills.filter((s) => s.name !== skill.name) : [...newAgent.skills, { name: skill.name, display_name: skill.display_name }] });
-  };
-  const toggleSkillInEdit = (skill: Skill) => {
-    const current = editForm.skills || [];
-    const exists = current.some((s) => s.name === skill.name);
-    setEditForm({ ...editForm, skills: exists ? current.filter((s) => s.name !== skill.name) : [...current, { name: skill.name, display_name: skill.display_name }] });
+  const openCreate = () => {
+    setForm({ ...emptyForm, avatar_seed: generateSeed() });
+    setDialogMode("create");
+    setEditingName(null);
+    setDialogOpen(true);
   };
 
-  const createAgent = async () => {
-    if (!newAgent.name || !newAgent.display_name || !newAgent.system_prompt) return;
+  const openEdit = (agent: AgentTemplate) => {
+    setForm({
+      name: agent.name,
+      display_name: agent.display_name,
+      role: agent.role,
+      goal: agent.goal || "",
+      system_prompt: agent.system_prompt || "",
+      model: agent.model || "",
+      provider: agent.provider || "",
+      constraints: agent.constraints.join("\n"),
+      participation_modes: agent.participation_modes,
+      risk_level: agent.risk_level,
+      skills: agent.skills || [],
+      avatar_seed: agent.name,
+    });
+    setDialogMode("edit");
+    setEditingName(agent.name);
+    setDialogOpen(true);
+  };
+
+  const toggleSkill = (skill: Skill) => {
+    const exists = form.skills.some((s) => s.name === skill.name);
+    setForm({ ...form, skills: exists ? form.skills.filter((s) => s.name !== skill.name) : [...form.skills, { name: skill.name, display_name: skill.display_name }] });
+  };
+
+  const toggleMode = (mode: string) => {
+    const modes = form.participation_modes.includes(mode) ? form.participation_modes.filter((m) => m !== mode) : [...form.participation_modes, mode];
+    setForm({ ...form, participation_modes: modes });
+  };
+
+  const handleSave = async () => {
+    if (dialogMode === "create" && (!form.name || !form.display_name || !form.system_prompt)) return;
     setSaving(true);
     try {
-      await fetch("/api/settings/agents", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...newAgent, constraints: newAgent.constraints.split("\n").filter(Boolean), capabilities: [], allowed_tools: [] }),
-      });
-      setShowCreate(false);
-      setNewAgent({ name: "", display_name: "", role: "custom", goal: "", system_prompt: "", model: "", provider: "", constraints: "", participation_modes: ["planning"], risk_level: "low", skills: [] });
+      if (dialogMode === "create") {
+        await fetch("/api/settings/agents", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...form, constraints: form.constraints.split("\n").filter(Boolean), capabilities: [], allowed_tools: [] }),
+        });
+      } else {
+        await fetch(`/api/settings/agents/${editingName}`, {
+          method: "PUT", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            display_name: form.display_name, role: form.role, goal: form.goal,
+            system_prompt: form.system_prompt, model: form.model || null,
+            constraints: form.constraints.split("\n").filter(Boolean),
+            participation_modes: form.participation_modes,
+            risk_level: form.risk_level, skills: form.skills,
+          }),
+        });
+      }
+      setDialogOpen(false);
       await fetchAgents();
     } catch {} finally { setSaving(false); }
   };
@@ -100,228 +164,392 @@ export default function AgentsPage() {
     try { await fetch(`/api/settings/agents/${name}`, { method: "DELETE" }); await fetchAgents(); } catch {}
   };
 
-  const saveEdit = async (agentName: string) => {
-    setSaving(true);
-    try {
-      await fetch(`/api/settings/agents/${agentName}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(editForm) });
-      setEditingAgent(null); setEditForm({}); await fetchAgents();
-    } catch {} finally { setSaving(false); }
-  };
-
-  const startEdit = (agent: AgentTemplate) => {
-    setEditingAgent(agent.name);
-    setEditForm({
-      display_name: agent.display_name, role: agent.role, goal: agent.goal || "",
-      system_prompt: agent.system_prompt || "", model: agent.model || "",
-      constraints: agent.constraints, participation_modes: agent.participation_modes,
-      risk_level: agent.risk_level, skills: agent.skills || [],
-    });
-  };
-
   if (loading) {
     return (
-      <div className="min-h-screen">
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 dark:from-slate-950 dark:via-slate-950 dark:to-indigo-950/20">
         <TopNav />
         <main className="flex items-center justify-center py-20"><div className="flex gap-1.5"><span className="typing-dot" /><span className="typing-dot" /><span className="typing-dot" /></div></main>
       </div>
     );
   }
 
-  const renderSkillSelector = (selected: SkillRef[], toggle: (skill: Skill) => void) => (
-    <div>
-      <label className="mb-1.5 block text-xs font-medium text-[var(--muted)]">配备 Skill</label>
-      {skills.length === 0 ? (
-        <p className="text-xs text-[var(--muted)]">暂无可选 Skill</p>
-      ) : (
-        <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto rounded-md border border-[var(--card-border)] bg-[var(--surface)] p-2">
-          {skills.map((skill) => {
-            const active = selected.some((s) => s.name === skill.name);
-            return (
-              <button key={skill.id} onClick={() => toggle(skill)}
-                className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium transition cursor-pointer ${
-                  active ? "bg-[var(--accent)] text-white" : "border border-[var(--card-border)] text-[var(--muted)] hover:border-[var(--accent)] hover:text-[var(--foreground)]"
-                }`}>
-                <Zap size={8} />{skill.display_name}
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 dark:from-slate-950 dark:via-slate-950 dark:to-indigo-950/20">
       <TopNav />
       <main className="min-w-0 pt-14">
-        <div className="mx-auto max-w-4xl px-6 py-8">
+        <div className="mx-auto max-w-5xl px-6 py-8">
           {/* Header */}
           <div className="mb-6 flex items-center justify-between">
             <div>
-              <h1 className="text-2xl font-semibold tracking-tight">Agent 团队</h1>
-              <p className="mt-1 text-sm text-[var(--muted)]">管理 AI Agent 团队成员</p>
+              <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
+                <div className="flex size-8 items-center justify-center rounded-lg bg-indigo-100 dark:bg-indigo-500/15">
+                  <Bot size={16} className="text-indigo-600 dark:text-indigo-400" />
+                </div>
+                Agent 团队
+              </h1>
+              <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-400">管理 AI Agent 团队成员</p>
             </div>
-            <span className="rounded-md bg-[var(--accent-soft)] px-2 py-1 text-xs font-medium text-[var(--accent)]">{agents.length} 个 Agent</span>
+            <div className="flex items-center gap-3">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 dark:bg-indigo-500/10 px-3 py-1.5 text-xs font-semibold text-indigo-600 dark:text-indigo-400">
+                <Bot size={11} />
+                {agents.length} 个 Agent
+              </span>
+              <Button onClick={openCreate} size="sm" className="gap-1.5 cursor-pointer">
+                <Plus size={14} />
+                创建 Agent
+              </Button>
+            </div>
           </div>
 
-          {/* Agent List */}
-          <div className="space-y-3">
-            {agents.map((agent) => (
-              <div key={agent.id} className="card p-4">
-                {editingAgent === agent.name ? (
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-sm font-semibold">编辑 {agent.display_name}</h3>
-                      <div className="flex gap-2">
-                        <button onClick={() => saveEdit(agent.name)} disabled={saving}
-                          className="flex items-center gap-1 rounded-md bg-[var(--accent)] px-3 py-1.5 text-xs text-white cursor-pointer hover:bg-[var(--accent-hover)] disabled:opacity-30">
-                          {saving ? <Loader2 size={11} className="animate-spin" /> : null}{saving ? "保存中..." : "保存"}
-                        </button>
-                        <button onClick={() => { setEditingAgent(null); setEditForm({}); }}
-                          className="rounded-md border border-[var(--card-border)] px-3 py-1.5 text-xs cursor-pointer hover:bg-[var(--surface-elevated)]">取消</button>
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div><label className="mb-1 block text-xs font-medium text-[var(--muted)]">显示名称</label>
-                        <input type="text" value={editForm.display_name || ""} onChange={(e) => setEditForm({ ...editForm, display_name: e.target.value })}
-                          className="w-full rounded-md border border-[var(--card-border)] bg-[var(--surface)] px-3 py-2 text-xs outline-none focus:border-[var(--accent)]" /></div>
-                      <div><label className="mb-1 block text-xs font-medium text-[var(--muted)]">风险等级</label>
-                        <select value={editForm.risk_level || "low"} onChange={(e) => setEditForm({ ...editForm, risk_level: e.target.value })}
-                          className="w-full rounded-md border border-[var(--card-border)] bg-[var(--surface)] px-3 py-2 text-xs outline-none focus:border-[var(--accent)]">
-                          <option value="low">低风险</option><option value="medium">中风险</option><option value="high">高风险</option></select></div>
-                    </div>
-                    <div><label className="mb-1 block text-xs font-medium text-[var(--muted)]">目标</label>
-                      <textarea value={editForm.goal || ""} onChange={(e) => setEditForm({ ...editForm, goal: e.target.value })} rows={2}
-                        className="w-full rounded-md border border-[var(--card-border)] bg-[var(--surface)] px-3 py-2 text-xs outline-none focus:border-[var(--accent)] resize-y" /></div>
-                    <div><label className="mb-1 block text-xs font-medium text-[var(--muted)]">System Prompt</label>
-                      <textarea value={editForm.system_prompt || ""} onChange={(e) => setEditForm({ ...editForm, system_prompt: e.target.value })} rows={4}
-                        className="w-full rounded-md border border-[var(--card-border)] bg-[var(--surface)] px-3 py-2 text-xs outline-none focus:border-[var(--accent)] resize-y font-mono" /></div>
-                    <div><label className="mb-1 block text-xs font-medium text-[var(--muted)]">指定模型</label>
-                      <input type="text" value={editForm.model || ""} onChange={(e) => setEditForm({ ...editForm, model: e.target.value || null })} placeholder="留空使用全局默认"
-                        className="w-full rounded-md border border-[var(--card-border)] bg-[var(--surface)] px-3 py-2 text-xs outline-none focus:border-[var(--accent)]" /></div>
-                    {renderSkillSelector(editForm.skills || [], toggleSkillInEdit)}
-                  </div>
-                ) : (
-                  <>
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-start gap-3 min-w-0">
-                        <div className="flex size-9 shrink-0 items-center justify-center rounded-md bg-[var(--accent-soft)] text-[var(--accent)]">
+          {/* Agent Grid */}
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {agents.map((agent) => {
+              const risk = RISK_CONFIG[agent.risk_level] || RISK_CONFIG.low;
+              const roleColor = ROLE_COLORS[agent.role] || "#64748b";
+              const roleLabel = ROLE_OPTIONS.find((r) => r.value === agent.role)?.label || agent.role;
+              const agentAvatar = avatarUrl(agent.name);
+              return (
+                <div key={agent.id} className="group relative rounded-xl bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm ring-1 ring-slate-200/60 dark:ring-slate-700/40 transition-all duration-200 hover:ring-indigo-300/80 dark:hover:ring-indigo-500/30 hover:shadow-md hover:shadow-indigo-500/5 flex flex-col">
+                  {/* Card body */}
+                  <div className="px-4 pt-3.5 pb-2">
+                    <div className="flex items-start gap-3">
+                      {/* Avatar */}
+                      {agentAvatar ? (
+                        <img src={agentAvatar} alt={agent.display_name} className="size-9 shrink-0 rounded-lg bg-slate-100 dark:bg-slate-800 object-cover" />
+                      ) : (
+                        <div className="flex size-9 shrink-0 items-center justify-center rounded-lg transition-colors duration-200" style={{ background: `${roleColor}12`, color: roleColor }}>
                           <Bot size={16} />
                         </div>
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <h3 className="text-sm font-semibold">{agent.display_name}</h3>
-                            {agent.is_builtin && <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--accent-soft)] text-[var(--accent)] font-medium">内置</span>}
-                          </div>
-                          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                            <span className="text-[11px] text-[var(--muted)]">{agent.role}</span>
-                            <span className="text-[11px]" style={{ color: RISK_COLORS[agent.risk_level] || "var(--muted)" }}>
-                              <Shield size={9} className="inline mr-0.5" />{RISK_LABELS[agent.risk_level] || agent.risk_level}
-                            </span>
-                          </div>
-                          {agent.goal && <p className="mt-1.5 text-xs text-[var(--muted)] leading-relaxed">{agent.goal}</p>}
-                          {agent.skills && agent.skills.length > 0 && (
-                            <div className="flex flex-wrap items-center gap-1 mt-2">
-                              {agent.skills.map((s, i) => (
-                                <span key={i} className="inline-flex items-center gap-0.5 rounded bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--accent)]">
-                                  <Zap size={7} />{s.display_name || s.name}</span>
-                              ))}
-                            </div>
+                      )}
+
+                      {/* Info */}
+                      <div className="min-w-0 flex-1 pr-5">
+                        {/* Line 1: Name + Builtin */}
+                        <div className="flex items-center gap-1.5">
+                          <h3 className="text-[13px] font-semibold text-slate-800 dark:text-slate-100 truncate">{agent.display_name}</h3>
+                          {agent.is_builtin && (
+                            <span className="shrink-0 rounded bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 text-[9px] font-semibold text-slate-500 dark:text-slate-400">内置</span>
                           )}
-                          {agent.capabilities.length > 0 && (
-                            <div className="flex flex-wrap gap-1 mt-2">
-                              {agent.capabilities.map((c, i) => (
-                                <span key={i} className="rounded border border-[var(--card-border)] bg-[var(--surface)] px-1.5 py-0.5 text-[10px] text-[var(--muted)]">{c.description || c.name}</span>
-                              ))}
-                            </div>
-                          )}
-                          <div className="flex items-center gap-1.5 mt-2">
-                            {agent.participation_modes.map((m) => (
-                              <span key={m} className="rounded bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] text-[var(--accent)]">{MODE_LABELS[m] || m}</span>
-                            ))}
-                            {agent.model && <span className="text-[10px] text-[var(--muted)]">模型：{agent.model}</span>}
-                          </div>
                         </div>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <button onClick={() => startEdit(agent)} className="flex items-center gap-1 text-xs text-[var(--muted)] hover:text-[var(--foreground)] cursor-pointer transition-colors">
-                          <Pencil size={10} />编辑</button>
-                        {!agent.is_builtin && (
-                          <button onClick={() => deleteAgent(agent.name)} className="flex items-center gap-1 text-xs text-[var(--danger)] hover:underline cursor-pointer">
-                            <Trash2 size={10} />删除</button>
+
+                        {/* Line 2: Role · Risk · Model */}
+                        <div className="mt-1 flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                          <span style={{ color: roleColor }} className="font-medium">{roleLabel}</span>
+                          <span className="text-slate-300 dark:text-slate-600">·</span>
+                          <span className="flex items-center gap-0.5" style={{ color: risk.color }}>
+                            <Shield size={9} />{risk.label}
+                          </span>
+                          {agent.model && (
+                            <>
+                              <span className="text-slate-300 dark:text-slate-600">·</span>
+                              <span className="truncate">{agent.model}</span>
+                            </>
+                          )}
+                        </div>
+
+                        {/* Line 3: Skills */}
+                        <div className="mt-1.5 flex items-center gap-1 flex-wrap">
+                          {agent.skills && agent.skills.slice(0, 1).map((s, i) => (
+                            <span key={i} className="inline-flex items-center gap-0.5 rounded bg-amber-50 dark:bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-medium text-amber-600 dark:text-amber-400">
+                              <Zap size={7} />{s.display_name || s.name}
+                            </span>
+                          ))}
+                          {agent.skills && agent.skills.length > 1 && (
+                            <span className="text-[9px] text-slate-400 dark:text-slate-500">+{agent.skills.length - 1}</span>
+                          )}
+                        </div>
+
+                        {/* Line 4: Goal (1 line) */}
+                        {agent.goal && (
+                          <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500 truncate">{agent.goal}</p>
                         )}
                       </div>
                     </div>
-                  </>
-                )}
-              </div>
-            ))}
-          </div>
+                  </div>
 
-          {/* Create Agent */}
-          <div className="mt-4">
-            {showCreate ? (
-              <div className="card p-5 space-y-3">
-                <h3 className="text-sm font-semibold">创建自定义 Agent</h3>
-                <div className="grid grid-cols-2 gap-3">
-                  <div><label className="mb-1 block text-xs font-medium text-[var(--muted)]">名称（英文标识）</label>
-                    <input type="text" value={newAgent.name} onChange={(e) => setNewAgent({ ...newAgent, name: e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, "") })} placeholder="my-agent"
-                      className="w-full rounded-md border border-[var(--card-border)] bg-[var(--surface)] px-3 py-2 text-xs outline-none focus:border-[var(--accent)]" /></div>
-                  <div><label className="mb-1 block text-xs font-medium text-[var(--muted)]">显示名称</label>
-                    <input type="text" value={newAgent.display_name} onChange={(e) => setNewAgent({ ...newAgent, display_name: e.target.value })} placeholder="我的 Agent"
-                      className="w-full rounded-md border border-[var(--card-border)] bg-[var(--surface)] px-3 py-2 text-xs outline-none focus:border-[var(--accent)]" /></div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div><label className="mb-1 block text-xs font-medium text-[var(--muted)]">角色</label>
-                    <select value={newAgent.role} onChange={(e) => setNewAgent({ ...newAgent, role: e.target.value })}
-                      className="w-full rounded-md border border-[var(--card-border)] bg-[var(--surface)] px-3 py-2 text-xs outline-none focus:border-[var(--accent)]">
-                      {ROLE_OPTIONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}</select></div>
-                  <div><label className="mb-1 block text-xs font-medium text-[var(--muted)]">风险等级</label>
-                    <select value={newAgent.risk_level} onChange={(e) => setNewAgent({ ...newAgent, risk_level: e.target.value })}
-                      className="w-full rounded-md border border-[var(--card-border)] bg-[var(--surface)] px-3 py-2 text-xs outline-none focus:border-[var(--accent)]">
-                      <option value="low">低风险</option><option value="medium">中风险</option><option value="high">高风险</option></select></div>
-                </div>
-                <div><label className="mb-1 block text-xs font-medium text-[var(--muted)]">目标</label>
-                  <input type="text" value={newAgent.goal} onChange={(e) => setNewAgent({ ...newAgent, goal: e.target.value })} placeholder="负责什么工作？"
-                    className="w-full rounded-md border border-[var(--card-border)] bg-[var(--surface)] px-3 py-2 text-xs outline-none focus:border-[var(--accent)]" /></div>
-                <div><label className="mb-1 block text-xs font-medium text-[var(--muted)]">System Prompt</label>
-                  <textarea value={newAgent.system_prompt} onChange={(e) => setNewAgent({ ...newAgent, system_prompt: e.target.value })} rows={4} placeholder="你是一个..."
-                    className="w-full rounded-md border border-[var(--card-border)] bg-[var(--surface)] px-3 py-2 text-xs outline-none focus:border-[var(--accent)] resize-y font-mono" /></div>
-                <div><label className="mb-1 block text-xs font-medium text-[var(--muted)]">指定模型（留空使用全局默认）</label>
-                  <input type="text" value={newAgent.model} onChange={(e) => setNewAgent({ ...newAgent, model: e.target.value })} placeholder="gpt-4o"
-                    className="w-full rounded-md border border-[var(--card-border)] bg-[var(--surface)] px-3 py-2 text-xs outline-none focus:border-[var(--accent)]" /></div>
-                <div><label className="mb-1 block text-xs font-medium text-[var(--muted)]">约束条件（每行一条）</label>
-                  <textarea value={newAgent.constraints} onChange={(e) => setNewAgent({ ...newAgent, constraints: e.target.value })} rows={2} placeholder="必须先确认技术方案再编码"
-                    className="w-full rounded-md border border-[var(--card-border)] bg-[var(--surface)] px-3 py-2 text-xs outline-none focus:border-[var(--accent)] resize-y" /></div>
-                <div><label className="mb-1 block text-xs font-medium text-[var(--muted)]">参与模式</label>
-                  <div className="flex gap-2">
-                    {(["planning", "execution", "roundtable"] as const).map((mode) => (
-                      <button key={mode} onClick={() => {
-                        const modes = newAgent.participation_modes.includes(mode) ? newAgent.participation_modes.filter((m) => m !== mode) : [...newAgent.participation_modes, mode];
-                        setNewAgent({ ...newAgent, participation_modes: modes });
-                      }} className={`rounded-md px-3 py-1.5 text-xs cursor-pointer transition ${newAgent.participation_modes.includes(mode) ? "bg-[var(--accent)] text-white" : "border border-[var(--card-border)] hover:border-[var(--accent)]"}`}>
-                        {MODE_LABELS[mode]}</button>
-                    ))}
+                  {/* Card bottom actions */}
+                  <div className="mt-auto px-4 py-2 border-t border-slate-100 dark:border-slate-800/60 flex items-center gap-2">
+                    <button type="button" onClick={() => openEdit(agent)}
+                      className="inline-flex items-center gap-1 rounded-md bg-indigo-50 dark:bg-indigo-500/10 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 px-2 py-1 text-[10px] font-medium text-indigo-600 dark:text-indigo-400 transition-colors duration-200 cursor-pointer">
+                      <Pencil size={10} />编辑
+                    </button>
+                    <button type="button" onClick={() => openEdit(agent)}
+                      className="inline-flex items-center gap-1 rounded-md bg-violet-50 dark:bg-violet-500/10 hover:bg-violet-100 dark:hover:bg-violet-500/20 px-2 py-1 text-[10px] font-medium text-violet-600 dark:text-violet-400 transition-colors duration-200 cursor-pointer">
+                      <ImagePlus size={10} />生成头像
+                    </button>
+                    <button type="button" onClick={() => deleteAgent(agent.name)}
+                      className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium transition-colors duration-200 cursor-pointer ${
+                        agent.is_builtin
+                          ? "bg-slate-50 dark:bg-slate-800 text-slate-300 dark:text-slate-600 cursor-not-allowed"
+                          : "bg-red-50 dark:bg-red-500/10 hover:bg-red-100 dark:hover:bg-red-500/20 text-red-600 dark:text-red-400"
+                      }`}
+                      disabled={agent.is_builtin}>
+                      <Trash2 size={10} />删除
+                    </button>
                   </div>
                 </div>
-                {renderSkillSelector(newAgent.skills, toggleSkillInNew)}
-                <div className="flex gap-2 pt-1">
-                  <button onClick={createAgent} disabled={saving || !newAgent.name || !newAgent.display_name || !newAgent.system_prompt}
-                    className="flex items-center gap-1.5 rounded-md bg-[var(--accent)] px-4 py-2 text-xs font-medium text-white cursor-pointer hover:bg-[var(--accent-hover)] disabled:opacity-30 transition">
-                    {saving ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />}{saving ? "创建中..." : "创建 Agent"}
-                  </button>
-                  <button onClick={() => setShowCreate(false)} className="rounded-md border border-[var(--card-border)] px-4 py-2 text-xs cursor-pointer hover:bg-[var(--surface-elevated)] transition">取消</button>
+              );
+            })}
+
+            {/* Empty state */}
+            {agents.length === 0 && (
+              <div className="sm:col-span-2 lg:col-span-3 flex items-center gap-3 rounded-xl bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm ring-1 ring-slate-200/60 dark:ring-slate-700/40 px-4 py-3.5">
+                <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-300 dark:text-slate-600">
+                  <Bot size={15} strokeWidth={1.5} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-[13px] font-medium text-slate-400 dark:text-slate-500">还没有自定义 Agent</div>
+                  <div className="text-[11px] text-slate-300 dark:text-slate-600 mt-1">点击上方按钮创建第一个</div>
                 </div>
               </div>
-            ) : (
-              <button onClick={() => setShowCreate(true)}
-                className="flex items-center gap-2 rounded-md border border-dashed border-[var(--card-border)] p-3 w-full text-left cursor-pointer hover:border-[var(--accent)] hover:bg-[var(--accent-soft)] transition-all">
-                <Plus size={14} className="text-[var(--accent)]" /><span className="text-sm font-medium">创建自定义 Agent</span>
-              </button>
             )}
           </div>
         </div>
       </main>
+
+      {/* Create / Edit Dialog */}
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="p-0 gap-0 overflow-hidden [&>button]:hidden" style={{ display: 'flex', width: 900, maxWidth: 'calc(100% - 2rem)', height: 600 }} showCloseButton={false}>
+          <div className="flex h-full min-h-0">
+            {/* Left: Preview Panel */}
+            <div className="hidden md:flex w-[360px] shrink-0 flex-col items-center justify-center overflow-y-auto bg-gradient-to-br from-indigo-600 via-indigo-700 to-violet-800 dark:from-indigo-800 dark:via-indigo-900 dark:to-violet-950 text-white p-8">
+              <div className="flex flex-col items-center">
+                {avatarUrl(form.avatar_seed) ? (
+                  <img src={avatarUrl(form.avatar_seed)} alt={form.display_name || "Agent"} className="size-20 rounded-2xl bg-white/15 ring-1 ring-white/20 mb-5 object-cover" />
+                ) : (
+                  <div className="flex size-20 items-center justify-center rounded-2xl bg-white/15 backdrop-blur-sm mb-5 ring-1 ring-white/20">
+                    <Bot size={36} className="text-white" />
+                  </div>
+                )}
+                <h3 className="text-lg font-semibold text-center mb-2">
+                  {form.display_name || "新 Agent"}
+                </h3>
+                <p className="text-sm text-indigo-200 text-center leading-relaxed max-w-[240px]">
+                  {form.goal || "配置 Agent 的角色与能力，让它成为团队中的得力成员"}
+                </p>
+
+                {form.skills.length > 0 && (
+                  <div className="mt-6 flex flex-wrap justify-center gap-1.5">
+                    {form.skills.map((s, i) => (
+                      <span key={i} className="inline-flex items-center gap-1 rounded-full bg-white/15 px-2.5 py-1 text-[11px] font-medium text-indigo-100 ring-1 ring-white/10">
+                        <Zap size={9} />{s.display_name || s.name}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Left bottom info */}
+              <div className="mt-8 pt-4 border-t border-white/10 space-y-1.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-indigo-200">角色</span>
+                  <span className="font-medium">{ROLE_OPTIONS.find((r) => r.value === form.role)?.label || form.role}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-indigo-200">风险等级</span>
+                  <span className="font-medium">{RISK_CONFIG[form.risk_level]?.label || form.risk_level}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-indigo-200">参与模式</span>
+                  <span className="font-medium">{form.participation_modes.map((m) => MODE_LABELS[m] || m).join("、")}</span>
+                </div>
+                {form.model && (
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-indigo-200">模型</span>
+                    <span className="font-medium">{form.model}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Right: Form */}
+            <div className="flex-1 min-h-0 flex flex-col">
+              {/* Header */}
+              <div className="px-6 pt-5 pb-3 border-b border-slate-100 dark:border-slate-800/60">
+                <div className="flex items-center justify-between">
+                  <DialogTitle className="flex items-center gap-2 text-base">
+                    {dialogMode === "create" ? "创建自定义 Agent" : `编辑 ${form.display_name}`}
+                  </DialogTitle>
+                  <Button variant="ghost" size="icon-sm" onClick={() => setDialogOpen(false)} className="cursor-pointer text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 -mr-1.5">
+                    <X size={16} />
+                  </Button>
+                </div>
+                <DialogDescription className="text-slate-500 dark:text-slate-400 mt-1">
+                  {dialogMode === "create" ? "配置一个新的 Agent 团队成员" : "修改 Agent 的配置信息"}
+                </DialogDescription>
+              </div>
+
+              {/* Scrollable form */}
+              <div className="flex-1 min-h-0 overflow-y-auto px-6 py-5 space-y-4">
+                {/* Name + Display Name */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">名称（英文标识）</label>
+                    <input
+                      type="text" value={form.name}
+                      onChange={(e) => dialogMode === "create" && setForm({ ...form, name: e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, "") })}
+                      placeholder="my-agent" disabled={dialogMode === "edit"}
+                      className="h-9 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 px-3 text-sm text-slate-700 dark:text-slate-200 placeholder:text-slate-400 outline-none focus:border-indigo-300 dark:focus:border-indigo-500/40 focus:ring-2 focus:ring-indigo-500/10 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">显示名称</label>
+                    <input
+                      type="text" value={form.display_name}
+                      onChange={(e) => setForm({ ...form, display_name: e.target.value })}
+                      placeholder="我的 Agent"
+                      className="h-9 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 px-3 text-sm text-slate-700 dark:text-slate-200 placeholder:text-slate-400 outline-none focus:border-indigo-300 dark:focus:border-indigo-500/40 focus:ring-2 focus:ring-indigo-500/10 transition-all duration-200"
+                    />
+                  </div>
+                </div>
+
+                {/* Role + Risk */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">角色</label>
+                    <Select value={form.role} onValueChange={(v) => setForm({ ...form, role: v })}>
+                      <SelectTrigger className="w-full h-9 text-sm">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          {ROLE_OPTIONS.map((r) => (
+                            <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>
+                          ))}
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">风险等级</label>
+                    <Select value={form.risk_level} onValueChange={(v) => setForm({ ...form, risk_level: v })}>
+                      <SelectTrigger className="w-full h-9 text-sm">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          <SelectItem value="low">低风险</SelectItem>
+                          <SelectItem value="medium">中风险</SelectItem>
+                          <SelectItem value="high">高风险</SelectItem>
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                {/* Goal */}
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">目标</label>
+                  <input
+                    type="text" value={form.goal}
+                    onChange={(e) => setForm({ ...form, goal: e.target.value })}
+                    placeholder="负责什么工作？"
+                    className="h-9 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 px-3 text-sm text-slate-700 dark:text-slate-200 placeholder:text-slate-400 outline-none focus:border-indigo-300 dark:focus:border-indigo-500/40 focus:ring-2 focus:ring-indigo-500/10 transition-all duration-200"
+                  />
+                </div>
+
+                {/* System Prompt */}
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">System Prompt</label>
+                  <textarea
+                    value={form.system_prompt}
+                    onChange={(e) => setForm({ ...form, system_prompt: e.target.value })}
+                    rows={5} placeholder="你是一个..."
+                    className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 px-3 py-2 text-sm text-slate-700 dark:text-slate-200 placeholder:text-slate-400 outline-none focus:border-indigo-300 dark:focus:border-indigo-500/40 focus:ring-2 focus:ring-indigo-500/10 resize-y font-mono transition-all duration-200"
+                  />
+                </div>
+
+                {/* Model */}
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">指定模型（留空使用全局默认）</label>
+                  <input
+                    type="text" value={form.model}
+                    onChange={(e) => setForm({ ...form, model: e.target.value })}
+                    placeholder="gpt-4o"
+                    className="h-9 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 px-3 text-sm text-slate-700 dark:text-slate-200 placeholder:text-slate-400 outline-none focus:border-indigo-300 dark:focus:border-indigo-500/40 focus:ring-2 focus:ring-indigo-500/10 transition-all duration-200"
+                  />
+                </div>
+
+                {/* Constraints */}
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">约束条件（每行一条）</label>
+                  <textarea
+                    value={form.constraints}
+                    onChange={(e) => setForm({ ...form, constraints: e.target.value })}
+                    rows={2} placeholder="必须先确认技术方案再编码"
+                    className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 px-3 py-2 text-sm text-slate-700 dark:text-slate-200 placeholder:text-slate-400 outline-none focus:border-indigo-300 dark:focus:border-indigo-500/40 focus:ring-2 focus:ring-indigo-500/10 resize-y transition-all duration-200"
+                  />
+                </div>
+
+                {/* Participation Modes */}
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">参与模式</label>
+                  <div className="flex gap-2">
+                    {(["planning", "execution", "roundtable"] as const).map((mode) => {
+                      const active = form.participation_modes.includes(mode);
+                      return (
+                        <button key={mode} type="button" onClick={() => toggleMode(mode)}
+                          className={`inline-flex items-center rounded-lg px-3 py-1.5 text-xs font-medium transition-all duration-200 cursor-pointer ${
+                            active
+                              ? "bg-indigo-600 text-white shadow-sm"
+                              : "bg-white dark:bg-slate-800/50 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:border-indigo-300 dark:hover:border-indigo-500/40"
+                          }`}>
+                          {MODE_LABELS[mode]}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Skills */}
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">配备 Skill</label>
+                  {skills.length === 0 ? (
+                    <p className="text-xs text-slate-400 dark:text-slate-500">暂无可选 Skill</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/30 p-2.5">
+                      {skills.map((skill) => {
+                        const active = form.skills.some((s) => s.name === skill.name);
+                        return (
+                          <button key={skill.id} type="button" onClick={() => toggleSkill(skill)}
+                            className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-medium transition-all duration-200 cursor-pointer ${
+                              active
+                                ? "bg-amber-100 dark:bg-amber-500/15 text-amber-700 dark:text-amber-400 ring-1 ring-amber-200 dark:ring-amber-500/30"
+                                : "bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700"
+                            }`}>
+                            <Zap size={9} />{skill.display_name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="px-6 py-4 border-t border-slate-100 dark:border-slate-800/60 flex items-center justify-between bg-slate-50/50 dark:bg-slate-900/50">
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" onClick={() => setForm({ ...form, avatar_seed: generateSeed() })} className="gap-1.5 cursor-pointer h-8">
+                    <ImagePlus size={13} />随机头像
+                  </Button>
+                  {dialogMode === "edit" && !agents.find(a => a.name === editingName)?.is_builtin && (
+                    <Button variant="outline" size="sm" onClick={() => { deleteAgent(editingName!); setDialogOpen(false); }} className="gap-1.5 cursor-pointer h-8 text-red-600 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-500/10 border-red-200 dark:border-red-500/30">
+                      <Trash2 size={13} />删除
+                    </Button>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" onClick={() => setDialogOpen(false)} className="cursor-pointer h-8">取消</Button>
+                  <Button size="sm" onClick={handleSave} disabled={saving || (dialogMode === "create" && (!form.name || !form.display_name || !form.system_prompt))} className="gap-1.5 cursor-pointer h-8">
+                    {saving ? <Loader2 size={13} className="animate-spin" /> : dialogMode === "create" ? <Plus size={13} /> : null}
+                    {saving ? "保存中..." : dialogMode === "create" ? "创建 Agent" : "保存修改"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
