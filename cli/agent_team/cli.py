@@ -7,6 +7,8 @@ Implements:
 - LLM-powered task execution: each task is executed by an AI agent
 """
 
+from __future__ import annotations
+
 import fnmatch
 import json
 import os
@@ -215,6 +217,19 @@ class LLMClient:
     """Simple LLM client for code generation via OpenAI-compatible API."""
 
     # Agent role -> system prompt mapping
+    _OUTPUT_FORMAT_RULES = """
+
+【严格输出规则 - 必须遵守】
+1. 你的唯一输出目的是：生成可执行的代码文件。禁止输出纯分析报告、审查报告、规划文档。
+2. 你可以先用 1-3 句中文简要说明思路，但随后必须输出完整的代码文件。
+3. 每个文件必须使用以下标记包裹（这是自动解析的唯一格式）：
+---FILE: 相对路径---
+文件完整内容
+---END FILE---
+4. 代码必须是完整的、可直接运行的，不能省略、不能只有片段、不能用 "// ..." 占位。
+5. 如果任务涉及多个文件，每个文件都要单独用 ---FILE ---END FILE 包裹。
+6. 禁止只输出 Markdown 说明而没有代码文件。如果你发现自己没有输出任何 ---FILE 标记，请重新生成。"""
+
     AGENT_PROMPTS = {
         "architect": """你是一个资深软件架构师。你的职责是：
 1. 设计项目架构和技术选型
@@ -222,13 +237,7 @@ class LLMClient:
 3. 配置项目基础设施
 4. 生成可直接使用的代码文件
 
-请用中文说明你的设计决策，然后输出完整的代码。
-输出格式：对每个文件，使用以下标记：
----FILE: 相对路径---
-文件内容
----END FILE---
-
-确保生成的代码是完整的、可直接使用的。""",
+请用中文简要说明你的设计决策，然后输出完整的代码。""" + _OUTPUT_FORMAT_RULES,
 
         "developer": """你是一个高级全栈开发工程师。你的职责是：
 1. 实现功能代码
@@ -236,13 +245,7 @@ class LLMClient:
 3. 集成第三方库
 4. 确保代码质量和可维护性
 
-请用中文简要说明实现思路，然后输出完整的代码。
-输出格式：对每个文件，使用以下标记：
----FILE: 相对路径---
-文件内容
----END FILE---
-
-确保生成的代码是完整的、可直接运行的。""",
+请用中文简要说明实现思路，然后输出完整的代码。""" + _OUTPUT_FORMAT_RULES,
 
         "tester": """你是一个测试工程师。你的职责是：
 1. 编写单元测试和集成测试
@@ -250,21 +253,11 @@ class LLMClient:
 3. 配置测试环境
 4. 确保测试覆盖关键路径
 
-请用中文说明测试策略，然后输出完整的代码。
-输出格式：对每个文件，使用以下标记：
----FILE: 相对路径---
-文件内容
----END FILE---
-
-确保测试代码完整可运行。""",
+请用中文说明测试策略，然后输出完整的代码。""" + _OUTPUT_FORMAT_RULES,
     }
 
     DEFAULT_PROMPT = """你是一个全栈开发工程师。请根据任务描述生成代码。
-请用中文简要说明实现思路，然后输出完整的代码。
-输出格式：对每个文件，使用以下标记：
----FILE: 相对路径---
-文件内容
----END FILE---"""
+请用中文简要说明实现思路，然后输出完整的代码。""" + _OUTPUT_FORMAT_RULES
 
     def __init__(self, base_url: str, api_key: str, model: str = "gpt-4o-mini"):
         self.base_url = base_url.rstrip("/")
@@ -756,11 +749,15 @@ class ExecutionRunner:
             # 1. target_paths 中已存在的文件
             for tp in target_paths:
                 try:
+                    resolved = self.workspace._resolve_and_check(tp)
+                    if resolved.is_dir():
+                        click.echo(f"  📁 Target is directory, skipping read: {tp}")
+                        continue
                     if self.workspace.exists(tp):
                         content = self.workspace.read_file(tp)
                         existing_files[tp] = content
                         click.echo(f"  📄 Read existing: {tp} ({content.count(chr(10)) + 1} lines)")
-                except (PermissionError, FileNotFoundError):
+                except (PermissionError, FileNotFoundError, IsADirectoryError):
                     pass
 
             # 2. 之前生成的相关文件
@@ -771,51 +768,71 @@ class ExecutionRunner:
             # 构建 LLM 请求
             messages = self.llm_client.build_messages(task, existing_files, self.plan_context)
 
-            # 调用 LLM
+            # 调用 LLM（带自动重试：如果首次输出解析不到代码文件，则带修正提示重试一次）
             import asyncio
-            try:
-                response_text = asyncio.run(self.llm_client.generate(messages))
-                click.echo(f"  ✅ LLM response received ({len(response_text)} chars)")
+            MAX_RETRIES = 2  # 最多尝试 2 次
+            for attempt in range(1, MAX_RETRIES + 1):
+                try:
+                    response_text = asyncio.run(self.llm_client.generate(messages))
+                    click.echo(f"  ✅ LLM response received ({len(response_text)} chars)")
 
-                # 解析生成的文件
-                generated = self.llm_client.parse_files(response_text)
-                if generated:
-                    for rel_path, content in generated:
-                        try:
-                            self.workspace.write_file(rel_path, content)
-                            self.generated_files[rel_path] = content
-                            operations_log.append(f"Generated {rel_path} ({content.count(chr(10)) + 1} lines)")
-                            click.echo(f"  📝 Written: {rel_path} ({content.count(chr(10)) + 1} lines)")
-                        except PermissionError as e:
-                            operations_log.append(f"Write blocked: {rel_path} - {e}")
-                            click.echo(f"  🚫 Write blocked: {rel_path} - {e}")
-                            has_error = True
-                else:
-                    # No files parsed - save raw response as reference
-                    operations_log.append("LLM response could not be parsed into files")
-                    click.echo("  ⚠ Could not parse LLM response into files")
-                    # If there's only one target_path, write the whole response to it
-                    if len(target_paths) == 1:
-                        try:
-                            # Strip markdown code fences if present
-                            cleaned = re.sub(r'^```\w*\n?', '', response_text)
-                            cleaned = re.sub(r'\n?```$', '', cleaned)
-                            self.workspace.write_file(target_paths[0], cleaned)
-                            self.generated_files[target_paths[0]] = cleaned
-                            operations_log.append(f"Written raw response to {target_paths[0]}")
-                            click.echo(f"  📝 Written raw response to: {target_paths[0]}")
-                        except PermissionError as e:
-                            operations_log.append(f"Write blocked: {target_paths[0]} - {e}")
-                            has_error = True
-            except Exception as e:
-                operations_log.append(f"LLM call failed: {e}")
-                click.echo(f"  ❌ LLM call failed: {e}")
-                has_error = True
+                    # 解析生成的文件
+                    generated = self.llm_client.parse_files(response_text)
+                    if generated:
+                        for rel_path, content in generated:
+                            try:
+                                self.workspace.write_file(rel_path, content)
+                                self.generated_files[rel_path] = content
+                                operations_log.append(f"Generated {rel_path} ({content.count(chr(10)) + 1} lines)")
+                                click.echo(f"  📝 Written: {rel_path} ({content.count(chr(10)) + 1} lines)")
+                            except PermissionError as e:
+                                operations_log.append(f"Write blocked: {rel_path} - {e}")
+                                click.echo(f"  🚫 Write blocked: {rel_path} - {e}")
+                                has_error = True
+                        break  # 成功解析，退出重试循环
+
+                    # 首次解析失败，尝试重试
+                    if attempt < MAX_RETRIES:
+                        click.echo(f"  ⚠ Attempt {attempt}: Could not parse LLM response into files, retrying with correction hint...")
+                        retry_hint = (
+                            "你上次的输出中没有包含任何 ---FILE 标记，无法解析为代码文件。"
+                            "请检查你的输出——你必须输出完整的代码文件，每个文件用 ---FILE: 相对路径--- 和 ---END FILE--- 包裹。"
+                            "不要只输出分析报告或说明文档，必须输出可执行的代码。"
+                            "现在请重新生成，确保输出中包含 ---FILE 标记。"
+                        )
+                        messages.append({"role": "assistant", "content": response_text})
+                        messages.append({"role": "user", "content": retry_hint})
+                    else:
+                        # 最终仍解析失败，fallback 写入原文
+                        operations_log.append("LLM response could not be parsed into files after retry")
+                        click.echo("  ⚠ Could not parse LLM response into files after retry")
+                        if len(target_paths) == 1:
+                            try:
+                                # Strip markdown code fences if present
+                                cleaned = re.sub(r'^```\w*\n?', '', response_text)
+                                cleaned = re.sub(r'\n?```$', '', cleaned)
+                                self.workspace.write_file(target_paths[0], cleaned)
+                                self.generated_files[target_paths[0]] = cleaned
+                                operations_log.append(f"Written raw response to {target_paths[0]}")
+                                click.echo(f"  📝 Written raw response to: {target_paths[0]}")
+                            except PermissionError as e:
+                                operations_log.append(f"Write blocked: {target_paths[0]} - {e}")
+                                has_error = True
+                except Exception as e:
+                    operations_log.append(f"LLM call failed: {e}")
+                    click.echo(f"  ❌ LLM call failed: {e}")
+                    has_error = True
+                    break
         else:
             # 无 LLM 时：仅验证模式（旧行为）
             click.echo("\n  ⚠ No LLM configured, running in validation-only mode")
             for tp in target_paths:
                 try:
+                    resolved = self.workspace._resolve_and_check(tp)
+                    if resolved.is_dir():
+                        operations_log.append(f"Target is directory: {tp}")
+                        click.echo(f"  📁 Target is directory: {tp}")
+                        continue
                     if self.workspace.exists(tp):
                         try:
                             content = self.workspace.read_file(tp)
@@ -828,7 +845,7 @@ class ExecutionRunner:
                     else:
                         operations_log.append(f"Target path not found: {tp}")
                         click.echo(f"  ⚠ Target path not found: {tp}")
-                except PermissionError as e:
+                except (PermissionError, IsADirectoryError) as e:
                     operations_log.append(f"Access check for {tp} blocked: {e}")
 
         # ===== 运行验证命令 =====
@@ -983,14 +1000,261 @@ class ExecutionRunner:
 
 
 # ---------------------------------------------------------------------------
+# Helper: resolve LLM config from server or env
+# ---------------------------------------------------------------------------
+
+def _resolve_llm_config(server: str, llm_api_key: Optional[str], llm_base_url: str, llm_model: str, token: str = "") -> tuple:
+    """Resolve LLM configuration. Returns (api_key, base_url, model, source_description).
+
+    Resolution order:
+    1. CLI args / env vars (explicit --llm-api-key)
+    2. Local config file (.agent-team.json)
+    3. Server /api/settings/llm-config (auto-fetch with auth token)
+    """
+    if llm_api_key:
+        return llm_api_key, llm_base_url, llm_model, f"env: {llm_model} @ {llm_base_url}"
+    # Try local config file
+    for config_path in [Path.cwd() / ".agent-team.json", Path.home() / ".agent-team.json"]:
+        if config_path.exists():
+            try:
+                cfg = json.loads(config_path.read_text(encoding="utf-8"))
+                if cfg.get("llm_api_key"):
+                    return (cfg["llm_api_key"], cfg.get("llm_base_url", llm_base_url),
+                            cfg.get("llm_model", llm_model), f"config ({config_path.name})")
+            except Exception:
+                pass
+    # Try server llm-config endpoint (returns decrypted api_key with auth)
+    if token:
+        try:
+            import urllib.request
+            url = f"{server}/api/settings/llm-config"
+            headers = {"Authorization": f"Bearer {token}"}
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                if data.get("configured") and data.get("api_key"):
+                    return (data["api_key"], data.get("base_url", llm_base_url),
+                            data.get("model", llm_model),
+                            f"server: {data.get('provider_name', '?')} / {data.get('model', llm_model)}")
+        except Exception:
+            pass
+    return None, llm_base_url, llm_model, ""
+
+
+def _interactive_llm_setup(base_url: str, model: str) -> tuple:
+    """Interactive prompt to collect LLM API key. Returns (api_key, base_url, model)."""
+    rich_print_panel(
+        "执行计划需要 LLM 来生成代码，请配置：\n\n"
+        "常见配置：\n"
+        "  • OpenAI:     base_url=https://api.openai.com/v1  model=gpt-4o-mini\n"
+        "  • DeepSeek:   base_url=https://api.deepseek.com   model=deepseek-chat\n"
+        "  • 硅基流动:   base_url=https://api.siliconflow.cn  model=Qwen/Qwen2.5-7B-Instruct\n"
+        "  • Moonshot:   base_url=https://api.moonshot.cn    model=moonshot-v1-8k\n"
+        "  • 本地 Ollama: base_url=http://localhost:11434    model=llama3\n",
+        title="LLM 配置",
+    )
+    api_key = click.prompt("  API Key", default="", show_default=False)
+    if not api_key:
+        api_key = os.environ.get("LLM_API_KEY", "")
+    new_base_url = click.prompt("  Base URL", default=base_url)
+    new_model = click.prompt("  Model", default=model)
+    save = click.confirm("  保存配置到当前目录 (.agent-team.json)？", default=True)
+    if save and api_key:
+        config_path = Path.cwd() / ".agent-team.json"
+        cfg = {}
+        if config_path.exists():
+            try: cfg = json.loads(config_path.read_text(encoding="utf-8"))
+            except Exception: pass
+        cfg.update({"llm_api_key": api_key, "llm_base_url": new_base_url, "llm_model": new_model,
+                     "updated_at": datetime.now(timezone.utc).isoformat()})
+        config_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+        click.echo(f"  ✅ 配置已保存到 {config_path}")
+    return api_key, new_base_url, new_model
+
+
+def _resolve_token(token: Optional[str] = None) -> str:
+    """Resolve auth token from arg, env, or config file. Returns empty string if not found."""
+    if token:
+        return token
+    env_token = os.environ.get("AGENT_TEAM_TOKEN", "")
+    if env_token:
+        return env_token
+    for config_path in [Path.cwd() / ".agent-team.json", Path.home() / ".agent-team.json"]:
+        if config_path.exists():
+            try:
+                cfg = json.loads(config_path.read_text(encoding="utf-8"))
+                if cfg.get("token"):
+                    return cfg["token"]
+            except Exception:
+                pass
+    return ""
+
+
+def _make_request(url: str, token: str = "", method: str = "GET", data: Optional[bytes] = None, timeout: int = 30):
+    """Make an HTTP request with optional auth token. Returns (status_code, body_bytes) or raises."""
+    import urllib.request
+    import urllib.error
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.status, resp.read()
+
+
+def _fetch_plan_from_server(plan_id: str, server: str, token: str = "") -> Optional[dict]:
+    """Fetch execution plan from server. Returns plan dict or None."""
+    import urllib.request
+    import urllib.error
+    session_id = plan_id[5:] if plan_id.startswith("plan_") else plan_id
+    url = f"{server}/api/planning-sessions/{session_id}/execution-plan"
+    try:
+        headers = {}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            click.echo(f"❌ 认证失败：请提供有效的 Token。", err=True)
+            click.echo(f"   在 Web 端「设置」页面获取 Token，或使用 --token 参数。", err=True)
+        elif e.code == 400:
+            click.echo(f"❌ 执行计划尚未就绪（会话可能未审批）。", err=True)
+            click.echo(f"   请先在 Web 端审批方案，等待执行计划生成完成。", err=True)
+        elif e.code == 404:
+            click.echo(f"❌ 找不到会话或执行计划 (ID: {session_id})", err=True)
+        else:
+            click.echo(f"❌ 服务器返回错误 {e.code}: {e.reason}", err=True)
+        return None
+    except urllib.error.URLError as e:
+        click.echo(f"❌ 无法连接到服务器 {server}: {e.reason}", err=True)
+        click.echo(f"   请确保后端服务已启动。", err=True)
+        return None
+    except Exception as e:
+        click.echo(f"❌ 获取计划失败: {e}", err=True)
+        return None
+
+
+# ---------------------------------------------------------------------------
 # CLI Commands
 # ---------------------------------------------------------------------------
 
 @click.group()
 @click.version_option(version="0.1.0")
-def cli():
-    """Team Agent CLI - Execute planning plans locally."""
-    pass
+@click.option("--token", envvar="AGENT_TEAM_TOKEN", help="认证 Token（或在 Web 端「设置」页面获取）")
+@click.pass_context
+def cli(ctx, token):
+    """Team Agent CLI - 在本地执行 AI 生成的执行计划。"""
+    ctx.ensure_object(dict)
+    ctx.obj["token"] = _resolve_token(token)
+
+
+@cli.command()
+@click.option("--plan-id", required=True, help="执行计划 ID（从 Web 端获取）")
+@click.option("--server", default="http://localhost:8200", help="服务器地址")
+@click.option("--project", "-p", type=click.Path(), help="项目目录（默认当前目录）")
+@click.option("--step-by-step", is_flag=True, help="逐步执行（每个任务前需确认）")
+@click.option("--safe-mode", is_flag=True, help="安全模式（仅执行只读操作）")
+@click.option("--output", "-o", type=click.Path(), help="输出结果文件路径")
+@click.option("--verbose", "-v", is_flag=True, help="显示完整输出")
+@click.option("--llm-api-key", envvar="LLM_API_KEY", help="LLM API Key（或设置 LLM_API_KEY 环境变量）")
+@click.option("--llm-base-url", envvar="LLM_BASE_URL", default="https://api.openai.com/v1", help="LLM Base URL")
+@click.option("--llm-model", envvar="LLM_MODEL", default="gpt-4o-mini", help="LLM 模型名称")
+@click.pass_context
+def execute(ctx, plan_id, server, project, step_by_step, safe_mode, output, verbose, llm_api_key, llm_base_url, llm_model):
+    """一键拉取并执行计划（推荐使用此命令）。
+
+    \b
+    流程: 从服务器拉取计划 → 预览任务 → 确认 → LLM 生成代码 → 验证 → 输出结果
+
+    \b
+    快速开始:
+      1. 在 Web 端创建规划会话 → 审批方案 → 等待执行计划生成
+      2. 复制 plan_id，然后运行:
+         agent-team execute --plan-id plan_xxxxx --server http://localhost:8200
+
+    \b
+    LLM 配置（三选一）:
+      1. 环境变量:  export LLM_API_KEY=sk-xxx LLM_BASE_URL=... LLM_MODEL=...
+      2. 命令行:    --llm-api-key sk-xxx --llm-base-url https://api.deepseek.com
+      3. 交互输入:  不传参数，命令会引导你输入
+    """
+    # Banner
+    token = ctx.obj.get("token", "")
+    if HAS_RICH and console:
+        console.print(Panel(
+            f"[bold]Plan ID:[/bold] {plan_id}\n[bold]Server:[/bold]  {server}",
+            title="🚀 Team Agent 执行引擎", border_style="blue",
+        ))
+    else:
+        click.echo(f"\n🚀 Team Agent 执行引擎 | Plan: {plan_id} | Server: {server}")
+
+    # Fetch plan
+    click.echo(f"\n📡 正在从服务器拉取执行计划...")
+    plan = _fetch_plan_from_server(plan_id, server, token=token)
+    if not plan:
+        sys.exit(1)
+
+    tasks = plan.get("tasks", [])
+    if not tasks:
+        click.echo("❌ 执行计划中没有任务。")
+        sys.exit(1)
+
+    # Preview
+    click.echo(f"\n📋 执行计划: {plan.get('title', 'Unknown')}")
+    click.echo(f"   计划 ID: {plan.get('plan_id', 'unknown')} | 任务数: {len(tasks)} | 类型: {plan.get('project_type', 'unknown')}")
+    rich_print_task_table(tasks)
+
+    # Project path
+    project_path = Path(project) if project else Path.cwd()
+    if not project_path.exists():
+        project_path.mkdir(parents=True, exist_ok=True)
+        click.echo(f"📁 已创建项目目录: {project_path}")
+
+    # Resolve LLM
+    click.echo(f"\n🤖 检查 LLM 配置...")
+    api_key, base_url, model, source = _resolve_llm_config(server, llm_api_key, llm_base_url, llm_model, token=token)
+    if api_key:
+        click.echo(f"   ✅ LLM 已配置: {model} @ {base_url}")
+        llm_client = LLMClient(base_url=base_url, api_key=api_key, model=model)
+    else:
+        click.echo(f"   ⚠️  未找到 LLM API Key")
+        if source:
+            click.echo(f"   检测到: {source}")
+        do_setup = click.confirm("   是否现在配置 LLM？", default=True)
+        if do_setup:
+            api_key, base_url, model = _interactive_llm_setup(base_url, model)
+            if api_key:
+                llm_client = LLMClient(base_url=base_url, api_key=api_key, model=model)
+                click.echo(f"   ✅ LLM 已配置: {model} @ {base_url}")
+            else:
+                click.echo(f"   ⚠️  将运行在仅验证模式（不会生成代码）")
+                llm_client = None
+        else:
+            llm_client = None
+
+    # Confirm
+    click.echo(f"\n{'─'*50}")
+    click.echo(f"  项目目录: {project_path} | 任务: {len(tasks)} | LLM: {'已启用' if llm_client else '未启用'}")
+    click.echo(f"{'─'*50}")
+    if not click.confirm("  确认开始执行？", default=True):
+        click.echo("已取消。")
+        return
+
+    # Execute
+    plan_context = plan.get("proposal", plan.get("description", ""))
+    workspace = LocalWorkspace(project_path, safe_mode=safe_mode)
+    runner = ExecutionRunner(plan=plan, workspace=workspace, step_by_step=step_by_step,
+                             safe_mode=safe_mode, llm_client=llm_client, plan_context=plan_context)
+    result = runner.run()
+
+    # Save result
+    output_path = Path(output) if output else project_path / f"execution_result_{result['execution_id']}.json"
+    output_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    rich_print_result_summary(result, verbose=verbose)
+    click.echo(f"\n📄 结果已保存到: {output_path}")
+    click.echo(f"\n💡 后续: agent-team push-result --result-file {output_path} --server {server}")
 
 
 @cli.command()
@@ -1005,12 +1269,8 @@ def cli():
 @click.option("--llm-model", envvar="LLM_MODEL", default="gpt-4o-mini", help="LLM model name")
 @click.option("--server", default="http://localhost:8200", help="Server URL to fetch LLM config")
 def apply(plan_file, project, step_by_step, output, safe_mode, verbose, llm_api_key, llm_base_url, llm_model, server):
-    """Execute an execution plan from a JSON file with LLM-powered code generation.
-    
-    If --llm-api-key is not provided, attempts to fetch from the server.
-    Set LLM_API_KEY, LLM_BASE_URL, LLM_MODEL env vars as alternative.
-    """
-    click.echo(f"Loading plan from: {plan_file}")
+    """从本地 JSON 文件执行计划（推荐使用 execute 命令一键拉取并执行）。"""
+    click.echo(f"📂 加载计划文件: {plan_file}")
 
     # Load and validate the plan
     try:
@@ -1021,64 +1281,33 @@ def apply(plan_file, project, step_by_step, output, safe_mode, verbose, llm_api_
         sys.exit(1)
 
     # Validate required fields
-    required_fields = ["plan_id", "title", "tasks"]
-    for field in required_fields:
+    for field in ["plan_id", "title", "tasks"]:
         if field not in plan:
-            click.echo(f"Error: Missing required field '{field}' in plan", err=True)
+            click.echo(f"❌ 缺少必要字段 '{field}'", err=True)
             sys.exit(1)
 
-    click.echo(f"Plan: {plan['title']}")
-    click.echo(f"Plan ID: {plan['plan_id']}")
-    click.echo(f"Tasks: {len(plan.get('tasks', []))}")
+    click.echo(f"📋 计划: {plan['title']} | 任务: {len(plan.get('tasks', []))}")
 
     if not plan.get("tasks"):
-        click.echo("No tasks to execute.")
+        click.echo("❌ 计划中没有任务。")
         return
 
-    # Determine project path
     project_path = Path(project) if project else Path.cwd()
     if not project_path.exists():
         project_path.mkdir(parents=True, exist_ok=True)
-        click.echo(f"Created project directory: {project_path}")
+        click.echo(f"📁 已创建项目目录: {project_path}")
 
-    click.echo(f"Project: {project_path}")
-
-    # X-007: Rich task summary table
     rich_print_task_table(plan["tasks"])
 
-    # Resolve LLM configuration
-    llm_client = None
-    plan_context = ""
-
-    # Try to fetch LLM config from server if no API key provided
-    if not llm_api_key:
-        try:
-            import urllib.request
-            import urllib.error
-            # Try to get provider config from server
-            url = f"{server}/api/settings/providers"
-            req = urllib.request.Request(url)
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                providers = json.loads(resp.read().decode("utf-8"))
-                for p in providers:
-                    if p.get("has_api_key") and p.get("enabled", True):
-                        llm_base_url = p.get("base_url", llm_base_url)
-                        llm_model = p.get("default_model", llm_model)
-                        # Can't get actual API key from server for security
-                        break
-        except Exception:
-            pass  # Server not available, continue without
-
-    if llm_api_key:
-        llm_client = LLMClient(
-            base_url=llm_base_url,
-            api_key=llm_api_key,
-            model=llm_model,
-        )
-        click.echo(f"🤖 LLM enabled: {llm_model} @ {llm_base_url}")
+    # Resolve LLM
+    api_key, base_url, model, _ = _resolve_llm_config(server, llm_api_key, llm_base_url, llm_model, token="")
+    if api_key:
+        llm_client = LLMClient(base_url=base_url, api_key=api_key, model=model)
+        click.echo(f"🤖 LLM 已启用: {model} @ {base_url}")
     else:
-        click.echo("⚠️  No LLM API key provided. Running in validation-only mode.")
-        click.echo("   Set LLM_API_KEY env var or use --llm-api-key to enable code generation.")
+        click.echo("⚠️  未配置 LLM API Key，运行在仅验证模式。")
+        click.echo("   使用 --llm-api-key 或设置 LLM_API_KEY 环境变量来启用代码生成。")
+        llm_client = None
 
     # Build plan context from proposal
     plan_context = plan.get("proposal", plan.get("description", ""))
@@ -1116,58 +1345,32 @@ def apply(plan_file, project, step_by_step, output, safe_mode, verbose, llm_api_
 
 @cli.command("pull-plan")
 @click.option("--plan-id", required=True, help="Plan ID to pull")
-@click.option("--server", default="http://localhost:8000", help="Server URL")
-@click.option("--output", "-o", type=click.Path(), default="execution_plan.json", help="Output file path")
-def pull_plan(plan_id, server, output):
-    """Pull an execution plan from the server."""
-    import urllib.request
-    import urllib.error
+@click.option("--server", default="http://localhost:8200", help="服务器地址")
+@click.option("--output", "-o", type=click.Path(), default="execution_plan.json", help="输出文件路径")
+@click.pass_context
+def pull_plan(ctx, plan_id, server, output):
+    """从服务器拉取执行计划到本地。"""
+    token = ctx.obj.get("token", "")
+    click.echo(f"📡 正在拉取执行计划 (ID: {plan_id})...")
 
-    # The plan_id format is "plan_{session_id}", extract session_id
-    session_id = plan_id
-    if plan_id.startswith("plan_"):
-        session_id = plan_id[5:]
-
-    url = f"{server}/api/planning-sessions/{session_id}/execution-plan"
-
-    click.echo(f"Pulling plan from: {url}")
-
-    try:
-        req = urllib.request.Request(url)
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            plan_data = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        if e.code == 400:
-            click.echo("Error: Execution plan not yet available (session may not be approved).", err=True)
-        elif e.code == 404:
-            click.echo("Error: Session or plan not found.", err=True)
-        else:
-            click.echo(f"Error: Server returned {e.code}: {e.reason}", err=True)
-        sys.exit(1)
-    except urllib.error.URLError as e:
-        click.echo(f"Error: Cannot connect to server: {e.reason}", err=True)
+    plan = _fetch_plan_from_server(plan_id, server, token=token)
+    if not plan:
         sys.exit(1)
 
-    # Save to file
     output_path = Path(output)
-    output_path.write_text(
-        json.dumps(plan_data, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    output_path.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    click.echo(f"Plan saved to: {output_path}")
-    click.echo(f"Plan ID: {plan_data.get('plan_id', 'unknown')}")
-    click.echo(f"Title: {plan_data.get('title', 'unknown')}")
-    click.echo(f"Tasks: {len(plan_data.get('tasks', []))}")
+    tasks = plan.get("tasks", [])
+    click.echo(f"\n✅ 执行计划已保存到: {output_path}")
+    click.echo(f"   标题: {plan.get('title', 'unknown')} | 任务: {len(tasks)} 个")
 
-    # Show task summary
-    for i, task in enumerate(plan_data.get("tasks", [])):
-        title = task.get("title", f"Task {i + 1}")
-        owner = task.get("owner_role", "unknown")
-        click.echo(f"  {i + 1}. [{owner}] {title}")
+    if tasks:
+        rich_print_task_table(tasks)
 
-    click.echo(f"\nTo execute, run:")
-    click.echo(f"  agent-team apply {output_path}")
+    click.echo(f"\n💡 执行方式:")
+    click.echo(f"   agent-team apply {output_path}")
+    click.echo(f"   # 或一键执行:")
+    click.echo(f"   agent-team execute --plan-id {plan_id} --server {server}")
 
 
 @cli.command("debug")
@@ -1395,12 +1598,15 @@ def show_result(result_file, verbose):
 
 
 @cli.command("push-result")
-@click.option("--result-file", required=True, type=click.Path(exists=True), help="Path to execution_result.json")
-@click.option("--server", default="http://localhost:8000", help="Server URL")
-def push_result(result_file, server):
-    """Push execution result to the server."""
+@click.option("--result-file", required=True, type=click.Path(exists=True), help="执行结果文件路径")
+@click.option("--server", default="http://localhost:8200", help="服务器地址")
+@click.pass_context
+def push_result(ctx, result_file, server):
+    """推送执行结果到服务器。"""
     import urllib.request
     import urllib.error
+
+    token = ctx.obj.get("token", "")
 
     # Load the result file
     try:
@@ -1418,10 +1624,13 @@ def push_result(result_file, server):
 
     # POST to server
     payload = json.dumps(result_data, ensure_ascii=False).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(
         url,
         data=payload,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
 
@@ -1433,29 +1642,271 @@ def push_result(result_file, server):
                 click.echo(f"   Server ID: {resp_data['id']}")
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
-        click.echo(f"Error: Server returned {e.code}: {e.reason}", err=True)
-        if body:
-            click.echo(f"   Response: {body[:500]}", err=True)
+        if e.code == 401:
+            click.echo(f"❌ 认证失败：请提供有效的 Token。", err=True)
+            click.echo(f"   在 Web 端「设置」页面获取 Token，或使用 --token 参数。", err=True)
+        else:
+            click.echo(f"Error: Server returned {e.code}: {e.reason}", err=True)
+            if body:
+                click.echo(f"   Response: {body[:500]}", err=True)
         sys.exit(1)
     except urllib.error.URLError as e:
         click.echo(f"Error: Cannot connect to server: {e.reason}", err=True)
         sys.exit(1)
 
 
-@cli.command("init")
-@click.option("--server", default="http://localhost:8000", help="Server URL")
-@click.option("--project", "-p", type=click.Path(), help="Project path to bind")
-def init_cmd(server, project):
-    """Initialize the CLI workspace and verify server connection.
-    
-    Per CLI-004: Interactive initialization wizard that:
-    - Verifies server connectivity
-    - Checks authentication
-    - Binds local project directory
-    - Creates local config file
+@cli.command("chat")
+@click.option("--session-id", help="接入已有会话 ID")
+@click.option("--topic", help="新会话主题")
+@click.option("--server", default="http://localhost:8200", help="服务器地址")
+@click.option("--project", "-p", type=click.Path(), help="项目目录")
+@click.pass_context
+def chat_cmd(ctx, session_id, topic, server, project):
+    """进入交互对话模式 — 直接跟 Agent 团队聊天。
+
+    \b
+    最简用法:
+      agent-team chat              # 自动创建/恢复会话，直接聊
+
+    \b
+    进入后直接打字就行，跟聊天软件一样。
+    输入 /help 看更多命令。
     """
     import urllib.request
     import urllib.error
+    import threading
+
+    token = ctx.obj.get("token", "")
+    project_path = Path(project) if project else Path.cwd()
+    config_path = project_path / ".agent-team.json"
+
+    # --- Helper: HTTP request ---
+    def _api(method, path, data=None):
+        url = f"{server}/api{path}"
+        headers = {"Content-Type": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        body = json.dumps(data, ensure_ascii=False).encode("utf-8") if data else None
+        req = urllib.request.Request(url, data=body, headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return resp.status, json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            body_text = e.read().decode("utf-8", errors="replace")
+            if e.code == 401:
+                click.echo("❌ 认证失败：请提供有效的 Token。使用 --token 参数。")
+                sys.exit(1)
+            return e.code, body_text
+        except Exception as e:
+            return None, str(e)
+
+    # --- Auto resolve session ---
+    # Priority: --session-id > saved config > auto create
+    if session_id:
+        if session_id.startswith("plan_"):
+            session_id = session_id[5:]
+    else:
+        # Check saved session in config
+        if config_path.exists():
+            try:
+                cfg = json.loads(config_path.read_text(encoding="utf-8"))
+                saved_id = cfg.get("chat_session_id", "")
+                if saved_id:
+                    # Verify session still exists
+                    status, _ = _api("GET", f"/planning-sessions/{saved_id}/messages?limit=1")
+                    if status == 200:
+                        session_id = saved_id
+            except Exception:
+                pass
+
+        if not session_id:
+            # Auto create a new session
+            session_topic = topic or f"Chat - {project_path.name}"
+            status, data = _api("POST", "/planning-sessions", {"title": session_topic})
+            if status not in (200, 201):
+                click.echo(f"❌ 无法连接服务器: {data}")
+                sys.exit(1)
+            session_id = data.get("id", data.get("session_id", ""))
+
+            # Save session id for next time
+            try:
+                cfg = {}
+                if config_path.exists():
+                    cfg = json.loads(config_path.read_text(encoding="utf-8"))
+                cfg["chat_session_id"] = session_id
+                config_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+            except Exception:
+                pass
+
+    # --- Load existing messages ---
+    _, existing = _api("GET", f"/planning-sessions/{session_id}/messages?limit=50")
+    if isinstance(existing, list) and existing:
+        click.echo(f"  📜 历史消息 ({len(existing)} 条)：")
+        for m in existing[-10:]:  # Show last 10
+            display = m.get("sender_display", m.get("sender", "?"))
+            content = m.get("content", "")
+            msg_type = m.get("message_type", "chat")
+            if msg_type == "system":
+                continue
+            preview = content[:120] + ("..." if len(content) > 120 else "")
+            click.echo(f"  {display}: {preview}")
+
+    # --- SSE listener thread ---
+    last_seq = max((m.get("seq", 0) for m in existing), default=0) if isinstance(existing, list) else 0
+    stop_event = threading.Event()
+    printing_lock = threading.Lock()
+
+    def _print_agent_msg(sender_display, content, msg_type):
+        with printing_lock:
+            if msg_type == "system":
+                click.echo(f"\n  ⚙ {content[:300]}")
+            else:
+                lines = content.split("\n")
+                click.echo(f"\n  {sender_display}:")
+                for line in lines[:30]:
+                    click.echo(f"  │ {line}")
+                if len(lines) > 30:
+                    click.echo(f"  │ ... ({len(lines) - 30} more lines)")
+
+    def _poll_listener():
+        """Polling listener — reliable and simple."""
+        nonlocal last_seq
+        while not stop_event.is_set():
+            stop_event.wait(2.0)
+            if stop_event.is_set():
+                break
+            try:
+                _, msgs = _api("GET", f"/planning-sessions/{session_id}/messages?limit=20&after_seq={last_seq}")
+                if isinstance(msgs, list):
+                    for m in msgs:
+                        msg_seq = m.get("seq", 0)
+                        if msg_seq <= last_seq:
+                            continue
+                        last_seq = msg_seq
+                        display = m.get("sender_display", m.get("sender", "?"))
+                        content = m.get("content", "")
+                        msg_type = m.get("message_type", "chat")
+                        if m.get("sender") != "user":
+                            _print_agent_msg(display, content, msg_type)
+            except Exception:
+                pass
+
+    poll_thread = threading.Thread(target=_poll_listener, daemon=True)
+    poll_thread.start()
+
+    # --- Interactive loop ---
+    if HAS_RICH and console:
+        console.print(Panel(
+            f"[bold]会话:[/bold] {session_id}\n[bold]项目:[/bold] {project_path}",
+            title="💬 Team Agent Chat", border_style="blue",
+        ))
+    else:
+        click.echo(f"\n{'─'*40}")
+        click.echo(f"  💬 Team Agent Chat")
+        click.echo(f"  会话: {session_id}")
+        click.echo(f"  项目: {project_path}")
+        click.echo(f"  打字即聊天，/help 看命令")
+        click.echo(f"{'─'*40}\n")
+
+    workspace = LocalWorkspace(project_path, safe_mode=False)
+
+    while True:
+        try:
+            user_input = input("你> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            click.echo("\n  👋 再见！")
+            break
+
+        if not user_input:
+            continue
+
+        # Built-in commands
+        if user_input in ("/quit", "/exit", "/q"):
+            click.echo("  👋 再见！")
+            break
+        elif user_input == "/help":
+            click.echo("\n  /help      帮助")
+            click.echo("  /quit      退出")
+            click.echo("  /files     查看项目文件")
+            click.echo("  /read <p>  查看文件内容")
+            click.echo("  /tasks     查看任务列表")
+            click.echo("  /new       新建会话")
+            click.echo("  /clear     清屏\n")
+            continue
+        elif user_input.startswith("/files"):
+            try:
+                items = workspace.list_dir()
+                for item in items:
+                    icon = "📁" if item["type"] == "directory" else "📄"
+                    click.echo(f"  {icon} {item['name']}")
+            except Exception as e:
+                click.echo(f"  ❌ {e}")
+            continue
+        elif user_input.startswith("/read "):
+            path = user_input[6:].strip()
+            try:
+                content = workspace.read_file(path)
+                if len(content) > 2000:
+                    click.echo(content[:2000] + f"\n... ({len(content)} chars total)")
+                else:
+                    click.echo(content)
+            except Exception as e:
+                click.echo(f"  ❌ {e}")
+            continue
+        elif user_input == "/tasks":
+            _, tasks_data = _api("GET", f"/planning-sessions/{session_id}/tasks")
+            if isinstance(tasks_data, list) and tasks_data:
+                for t in tasks_data:
+                    si = {"completed": "✅", "failed": "❌", "in_progress": "🔄"}.get(t.get("status", ""), "⏳")
+                    click.echo(f"  {si} {t.get('title', '?')} [{t.get('assigned_agent', '?')}]")
+            else:
+                click.echo("  暂无任务")
+            continue
+        elif user_input == "/new":
+            session_topic = topic or f"Chat - {project_path.name}"
+            status, data = _api("POST", "/planning-sessions", {"title": session_topic})
+            if status in (200, 201):
+                session_id = data.get("id", data.get("session_id", ""))
+                last_seq = 0
+                try:
+                    cfg = {}
+                    if config_path.exists():
+                        cfg = json.loads(config_path.read_text(encoding="utf-8"))
+                    cfg["chat_session_id"] = session_id
+                    config_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+                except Exception:
+                    pass
+                click.echo(f"  ✅ 新会话: {session_id}")
+            else:
+                click.echo(f"  ❌ 创建失败: {data}")
+            continue
+        elif user_input == "/clear":
+            click.clear()
+            continue
+
+        # Send as chat message
+        status, resp = _api("POST", f"/planning-sessions/{session_id}/messages", {
+            "content": user_input,
+            "sender": "user",
+            "message_type": "chat",
+        })
+        if status != 200:
+            click.echo(f"  ❌ 发送失败: {resp}")
+
+    stop_event.set()
+    click.echo(f"\n  💡 下次运行 agent-team chat 自动恢复此会话")
+
+
+@cli.command("init")
+@click.option("--server", default="http://localhost:8200", help="服务器地址")
+@click.option("--project", "-p", type=click.Path(), help="项目目录")
+@click.pass_context
+def init_cmd(ctx, server, project):
+    """初始化 CLI 工作区并验证服务器连接。"""
+    import urllib.request
+    import urllib.error
+
+    token = ctx.obj.get("token", "")
 
     click.echo("🔧 Team Agent CLI 初始化向导")
     click.echo("=" * 40)
@@ -1475,10 +1926,21 @@ def init_cmd(server, project):
         click.echo("   请确保后端服务已启动: uvicorn app.main:app")
         sys.exit(1)
 
+    # Step 1.5: Configure token if not set
+    if not token:
+        click.echo("\n1b. 配置认证 Token")
+        click.echo("   在 Web 端「设置」页面可以获取 Token，用于 CLI 访问服务器 API。")
+        input_token = click.prompt("   Token（留空跳过）", default="", show_default=False)
+        if input_token.strip():
+            token = input_token.strip()
+
     # Step 2: Check available models
     click.echo("\n2. 检查模型配置")
     try:
-        req = urllib.request.Request(f"{server}/api/settings/models")
+        headers = {}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        req = urllib.request.Request(f"{server}/api/settings/models", headers=headers)
         with urllib.request.urlopen(req, timeout=5) as resp:
             model_settings = json.loads(resp.read().decode("utf-8"))
             providers = model_settings.get("providers", [])
@@ -1490,6 +1952,11 @@ def init_cmd(server, project):
             else:
                 click.echo("   ⚠️ 没有配置任何 LLM Provider")
                 click.echo("   请在 Web 端设置页面配置 API Key")
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            click.echo("   ⚠️ Token 无效，无法获取模型配置")
+        else:
+            click.echo("   ⚠️ 无法获取模型配置")
     except Exception:
         click.echo("   ⚠️ 无法获取模型配置")
 
@@ -1506,15 +1973,30 @@ def init_cmd(server, project):
         click.echo(f"   ❌ 目录不存在: {project_path}")
         sys.exit(1)
 
+    # Step 3.5: LLM config
+    click.echo("\n3b. 配置 LLM（可选）")
+    do_llm = click.confirm("   是否配置 LLM API Key？", default=True)
+    llm_api_key = ""
+    llm_base_url = "https://api.openai.com/v1"
+    llm_model = "gpt-4o-mini"
+    if do_llm:
+        llm_api_key, llm_base_url, llm_model = _interactive_llm_setup(llm_base_url, llm_model)
+
     # Step 4: Write local config
     click.echo("\n4. 保存本地配置")
     config_file = project_path / ".agent-team.json"
     config = {
         "server_url": server,
         "project_path": str(project_path),
+        "llm_base_url": llm_base_url,
+        "llm_model": llm_model,
         "initialized_at": datetime.now(timezone.utc).isoformat(),
         "version": "0.1.0",
     }
+    if llm_api_key:
+        config["llm_api_key"] = llm_api_key
+    if token:
+        config["token"] = token
     config_file.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
     click.echo(f"   ✅ 配置已保存: {config_file}")
 
@@ -1524,10 +2006,10 @@ def init_cmd(server, project):
     click.echo(f"\n服务器: {server}")
     click.echo(f"项目目录: {project_path}")
     click.echo(f"\n常用命令:")
-    click.echo(f"  agent-team pull-plan --plan-id <plan_id>    # 拉取执行计划")
-    click.echo(f"  agent-team apply <plan_file>                # 执行计划")
-    click.echo(f"  agent-team push-result --result-file <file> # 推送结果")
-    click.echo(f"  agent-team debug messages --session-id <id> # 查看消息")
+    click.echo(f"  agent-team execute --plan-id <plan_id>              # 一键拉取并执行")
+    click.echo(f"  agent-team pull-plan --plan-id <plan_id>            # 拉取执行计划")
+    click.echo(f"  agent-team apply <plan_file>                        # 执行本地计划文件")
+    click.echo(f"  agent-team push-result --result-file <file>         # 推送结果到服务器")
 
 
 if __name__ == "__main__":

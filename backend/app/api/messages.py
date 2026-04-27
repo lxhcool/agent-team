@@ -268,6 +268,66 @@ async def approve_session(
     return {"status": "approved", "session_id": session_id}
 
 
+class ReviseRequest(BaseModel):
+    """Request to revise the proposal with user feedback."""
+    feedback: str = Field(..., min_length=1, description="用户的修改意见")
+
+
+@router.post("/planning-sessions/{session_id}/revise")
+async def revise_session(
+    session_id: str,
+    req: ReviseRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Reject the proposal and send it back for revision with user feedback.
+
+    The session goes back to GENERATING_PROPOSAL state, and the agents
+    will refine the proposal based on the user's feedback, then re-review.
+    """
+    session = await db.get(PlanningSession, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.status != PlanningStatus.AWAITING_APPROVAL:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot revise session in status: {session.status}",
+        )
+
+    # Save user's revision feedback as a message
+    result = await db.execute(
+        select(func.max(Message.seq)).where(Message.session_id == session_id)
+    )
+    max_seq = result.scalar() or 0
+
+    feedback_msg = Message(
+        session_type="planning",
+        session_id=session_id,
+        seq=max_seq + 1,
+        sender="user",
+        message_type=MessageType.CHAT,
+        category="revision_feedback",
+        content=f"【退回修改】{req.feedback}",
+    )
+    db.add(feedback_msg)
+
+    # Transition back to GENERATING_PROPOSAL
+    session.status = PlanningStatus.GENERATING_PROPOSAL
+    await db.commit()
+
+    # Publish SSE event
+    event_bus.publish(session_id, Event(
+        event="status",
+        data={"status": "generating_proposal", "main_status": "planning", "detail": "用户退回修改，正在根据反馈优化方案..."},
+    ))
+
+    # Kick off revision in background
+    orchestrator = get_orchestrator()
+    task = asyncio.create_task(orchestrator.revise_proposal(session_id, req.feedback))
+    _running_planning_tasks[session_id] = task
+
+    return {"status": "revising", "session_id": session_id}
+
+
 @router.post("/planning-sessions/{session_id}/start")
 async def start_session(
     session_id: str,
@@ -381,6 +441,8 @@ ALLOWED_EXTENSIONS = {
     ".md", ".txt", ".json", ".yaml", ".yml", ".py", ".js", ".ts", ".tsx",
     ".jsx", ".css", ".html", ".sql", ".sh", ".toml", ".xml", ".csv",
     ".env", ".gitignore", ".dockerfile", ".makefile",
+    # Image formats for multimodal support
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg",
 }
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 

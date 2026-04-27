@@ -393,6 +393,74 @@ async def set_provider_api_key(
     return {"status": "updated", "masked_key": mask_api_key(req.api_key)}
 
 
+@router.get("/llm-config")
+async def get_llm_config_for_cli(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Return decrypted LLM config for CLI use.
+
+    Since CLI needs the actual API key to call LLM directly,
+    this endpoint returns the first enabled provider's decrypted config.
+    Requires authentication (same token as web UI).
+    """
+    result = await db.execute(
+        select(ProviderConfig).where(
+            ProviderConfig.user_id == user.id,
+            ProviderConfig.enabled == True,
+        )
+    )
+    providers = result.scalars().all()
+
+    # Also get model settings for execution_model preference
+    settings_result = await db.execute(
+        select(ModelSettings).where(ModelSettings.user_id == user.id)
+    )
+    settings = settings_result.scalars().first()
+
+    # Find the best provider: prefer one with api_key, then by execution_model match
+    best = None
+    for p in providers:
+        if p.api_key_encrypted:
+            best = p
+            # If this provider's default_model matches execution_model, use it
+            if settings and settings.execution_model and p.default_model == settings.execution_model:
+                break
+
+    if not best:
+        # No provider with API key configured
+        return {
+            "configured": False,
+            "message": "No LLM provider with API key configured. Please set up in Web UI Settings.",
+        }
+
+    try:
+        api_key = decrypt_api_key(best.api_key_encrypted)
+    except Exception:
+        return {
+            "configured": False,
+            "message": "Failed to decrypt API key. Please re-configure in Web UI Settings.",
+        }
+
+    # Determine model: execution_model > provider default_model > settings.default_model
+    model = None
+    if settings and settings.execution_model:
+        model = settings.execution_model
+    if not model:
+        model = best.default_model
+    if not model and settings:
+        model = settings.default_model
+
+    return {
+        "configured": True,
+        "api_key": api_key,
+        "base_url": best.base_url or "https://api.openai.com/v1",
+        "model": model or "gpt-4o-mini",
+        "provider_name": best.display_name or best.provider_name,
+        "api_type": best.api_type,
+    }
+
+
 @router.get("/models/providers/{provider_name}/models")
 async def get_provider_models(
     provider_name: str,

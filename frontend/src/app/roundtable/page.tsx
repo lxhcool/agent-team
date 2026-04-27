@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { TopNav } from "../components/topnav";
 import { useAuth } from "@/lib/auth";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 
 type RoundtableSession = {
   id: string; topic: string; status: string;
@@ -24,6 +25,7 @@ const STATUS: Record<string, { label: string; color: string; bg: string }> = {
 
 export default function RoundtableListPage() {
   const router = useRouter();
+  const { confirm, ConfirmDialog } = useConfirm();
   const { loading: authLoading } = useAuth();
   const [roundtables, setRoundtables] = useState<RoundtableSession[]>([]);
   const [loading, setLoading] = useState(true);
@@ -57,7 +59,7 @@ export default function RoundtableListPage() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm("确定删除此圆桌讨论？")) return;
+    if (!await confirm({ description: "确定删除此圆桌讨论？", variant: "destructive" })) return;
     setDeleting(id);
     try { await fetch(`/api/roundtable-sessions/${id}`, { method: "DELETE" }); setRoundtables((p) => p.filter((r) => r.id !== id)); } catch {} finally { setDeleting(null); }
   };
@@ -188,6 +190,7 @@ export default function RoundtableListPage() {
           )}
         </div>
       </main>
+      {ConfirmDialog}
     </div>
   );
 }

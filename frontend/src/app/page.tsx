@@ -8,6 +8,7 @@ import {
   MessageCircle, Trash2, ChevronRight, UsersRound, Zap,
   CheckCircle2, AlertCircle, MessageSquare, Diamond
 } from "lucide-react";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 
 import { TopNav } from "./components/topnav";
 import { useAuth } from "@/lib/auth";
@@ -91,6 +92,7 @@ const LIMIT = 6;
 
 export default function HomePage() {
   const router = useRouter();
+  const { confirm, ConfirmDialog } = useConfirm();
   const { loading: authLoading } = useAuth();
   const [sessions, setSessions] = useState<PlanningSession[]>([]);
   const [roundtables, setRoundtables] = useState<RoundtableSession[]>([]);
@@ -147,11 +149,11 @@ export default function HomePage() {
   };
 
   const handleDeleteSession = async (id: string) => {
-    if (!confirm("确定删除此会话？")) return;
+    if (!await confirm({ description: "确定删除此会话？", variant: "destructive" })) return;
     try { await fetch(`/api/planning-sessions/${id}`, { method: "DELETE" }); setSessions((p) => p.filter((s) => s.id !== id)); } catch {}
   };
   const handleDeleteRoundtable = async (id: string) => {
-    if (!confirm("确定删除此圆桌讨论？")) return;
+    if (!await confirm({ description: "确定删除此圆桌讨论？", variant: "destructive" })) return;
     try { await fetch(`/api/roundtable-sessions/${id}`, { method: "DELETE" }); setRoundtables((p) => p.filter((r) => r.id !== id)); } catch {}
   };
 
@@ -181,7 +183,7 @@ export default function HomePage() {
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 dark:from-slate-950 dark:via-slate-950 dark:to-indigo-950/20">
       <TopNav />
 
-      <main className="min-w-0 pt-40">
+      <main className="min-w-0 pt-28">
         <div className="mx-auto max-w-6xl px-6 pb-20">
           {/* Hero + Search — Primary focal point */}
           <section className="mb-8">
@@ -400,6 +402,7 @@ export default function HomePage() {
           )}
         </div>
       </main>
+      {ConfirmDialog}
     </div>
   );
 }

@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { TopNav } from "../components/topnav";
 import { useAuth } from "@/lib/auth";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 
 type PlanningSession = {
   id: string; title: string; status: string; mode: string;
@@ -31,6 +32,7 @@ const STATUS: Record<string, { label: string; color: string; bg: string }> = {
 };
 
 export default function SessionsPage() {
+  const { confirm, ConfirmDialog } = useConfirm();
   const { loading: authLoading } = useAuth();
   const [sessions, setSessions] = useState<PlanningSession[]>([]);
   const [loading, setLoading] = useState(true);
@@ -45,7 +47,7 @@ export default function SessionsPage() {
   }, []);
 
   const handleDelete = async (id: string) => {
-    if (!confirm("确定删除此会话？")) return;
+    if (!await confirm({ description: "确定删除此会话？", variant: "destructive" })) return;
     setDeleting(id);
     try { await fetch(`/api/planning-sessions/${id}`, { method: "DELETE" }); setSessions((p) => p.filter((s) => s.id !== id)); } catch {} finally { setDeleting(null); }
   };
@@ -136,6 +138,7 @@ export default function SessionsPage() {
           )}
         </div>
       </main>
+      {ConfirmDialog}
     </div>
   );
 }

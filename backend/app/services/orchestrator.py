@@ -14,6 +14,7 @@ Branch states:
 """
 
 import asyncio
+import json
 import logging
 from typing import Optional
 
@@ -22,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import async_session
 from app.llm.router import LLMRouter
-from app.models.models import PlanningSession, PlanningStatus, MessageType
+from app.models.models import PlanningSession, PlanningStatus, MessageType, Task, TaskStatus
 from app.services.agents import LeaderAgent, ResearcherAgent, ReviewerAgent, PlannerAgent, AgentFactory
 from app.services.event_bus import EventBus, Event
 from app.services.context import classify_error, ErrorLevel
@@ -177,23 +178,58 @@ class PlanningOrchestrator:
             # Leader generates initial proposal
             proposal = await leader.run_proposal(session_id, user_input, analysis)
 
-            # Reviewer reviews the proposal
-            await leader.save_message(
-                session_id,
-                f"方案已生成，请 Reviewer 进行审查。",
-                message_type=MessageType.CHAT,
-                category="coordination",
-            )
-            review_result = await reviewer.review(session_id, proposal, review_type="proposal")
-
-            # Leader refines proposal based on review feedback
-            if review_result:
-                leader.emit_status(session_id, "refining_proposal", "正在根据审查意见优化方案...")
-                refined_proposal = await leader._refine_proposal_with_review(
-                    session_id, proposal, review_result
+            # Review-Refine loop: Reviewer reviews, Leader refines, until APPROVE or max rounds
+            MAX_REVIEW_ROUNDS = 3
+            for review_round in range(1, MAX_REVIEW_ROUNDS + 1):
+                await leader.save_message(
+                    session_id,
+                    f"方案已生成，请 Reviewer 进行审查（第 {review_round} 轮）。",
+                    message_type=MessageType.CHAT,
+                    category="coordination",
                 )
-                if refined_proposal:
-                    proposal = refined_proposal
+                review_result = await reviewer.review(session_id, proposal, review_type="proposal")
+
+                # Parse verdict from review
+                verdict = ReviewerAgent.parse_verdict(review_result)
+                logger.info(f"[Planning] Review round {review_round}: verdict={verdict}")
+
+                if verdict == "APPROVE":
+                    await leader.save_message(
+                        session_id,
+                        "审查通过，方案质量达标。",
+                        message_type=MessageType.CHAT,
+                        category="coordination",
+                    )
+                    break
+
+                # NEEDS_REVISION: refine proposal based on review feedback
+                if review_result:
+                    leader.emit_status(
+                        session_id, "refining_proposal",
+                        f"正在根据审查意见优化方案（第 {review_round} 轮修改）..."
+                    )
+                    await leader.save_message(
+                        session_id,
+                        f"审查发现不足，正在根据审查意见修改方案（第 {review_round} 轮）...",
+                        message_type=MessageType.CHAT,
+                        category="coordination",
+                    )
+                    refined_proposal = await leader._refine_proposal_with_review(
+                        session_id, proposal, review_result
+                    )
+                    if refined_proposal:
+                        proposal = refined_proposal
+                else:
+                    break
+            else:
+                # Reached max review rounds — log warning but proceed
+                logger.warning(f"[Planning] Reached max review rounds ({MAX_REVIEW_ROUNDS}) for session {session_id}")
+                await leader.save_message(
+                    session_id,
+                    f"已达到最大审查轮数（{MAX_REVIEW_ROUNDS} 轮），当前方案将提交审批。",
+                    message_type=MessageType.CHAT,
+                    category="coordination",
+                )
 
             # Update session summary
             async with async_session() as db:
@@ -314,11 +350,54 @@ class PlanningOrchestrator:
             )
             plan_review = await reviewer.review(session_id, plan_text, review_type="plan")
 
-            # If reviewer has significant feedback, leader adjusts
-            if plan_review and len(plan_review) > 50:
+            # If reviewer says NEEDS_REVISION, refine the plan
+            plan_verdict = ReviewerAgent.parse_verdict(plan_review)
+            if plan_verdict == "NEEDS_REVISION" and plan_review:
                 leader.emit_status(session_id, "refining_plan", "正在根据审查意见优化执行计划...")
-                # Save review as a message for visibility
-                # The plan itself stays since it's already been generated
+                await leader.save_message(
+                    session_id,
+                    "执行计划审查发现不足，正在修改...",
+                    message_type=MessageType.CHAT,
+                    category="coordination",
+                )
+                refined_plan = await leader._refine_plan_with_review(
+                    session_id, plan_text, plan_review
+                )
+                if refined_plan:
+                    plan_text = refined_plan
+                    # Re-parse tasks from refined plan
+                    try:
+                        text = plan_text.strip()
+                        if text.startswith("```"):
+                            text = text.split("```")[1]
+                            if text.startswith("json"):
+                                text = text[4:]
+                        tasks_data = json.loads(text)
+                        # Update tasks in database
+                        async with async_session() as db:
+                            # Delete old tasks
+                            from sqlalchemy import delete
+                            await db.execute(delete(Task).where(Task.session_id == session_id))
+                            # Insert new tasks
+                            for i, td in enumerate(tasks_data):
+                                task = Task(
+                                    session_type="planning",
+                                    session_id=session_id,
+                                    title=td.get("title", f"Task {i+1}"),
+                                    description=td.get("description", ""),
+                                    status=TaskStatus.PENDING,
+                                    assigned_agent=td.get("assigned_agent"),
+                                    owner_role=td.get("assigned_agent"),
+                                    dependencies_json=json.dumps(td.get("dependencies", [])),
+                                    target_paths_json=json.dumps(td.get("target_paths", [])),
+                                    validation_commands_json=json.dumps(td.get("validation_commands", [])),
+                                    risk_level=td.get("risk_level", "low"),
+                                    order=i,
+                                )
+                                db.add(task)
+                            await db.commit()
+                    except (json.JSONDecodeError, Exception) as e:
+                        logger.warning(f"Failed to re-parse refined plan: {e}")
 
             # Generate artifacts (proposal.md + execution_plan.json)
             try:
@@ -354,6 +433,140 @@ class PlanningOrchestrator:
             self.event_bus.publish(session_id, Event(
                 event="error",
                 data={"message": f"Plan generation failed: {str(e)}"},
+            ))
+        finally:
+            self._running_sessions.discard(session_id)
+
+    async def revise_proposal(self, session_id: str, user_feedback: str):
+        """User rejected the proposal — go back and refine it with user feedback.
+
+        Flow: Leader acknowledges feedback → Refine proposal → Review-Refine loop → AWAITING_APPROVAL
+        """
+        if session_id in self._running_sessions:
+            logger.warning(f"Session {session_id} is already running")
+            return
+
+        self._running_sessions.add(session_id)
+
+        try:
+            # Get the current proposal from messages
+            async with async_session() as db:
+                from app.models.models import Message, MessageType as MT
+                result = await db.execute(
+                    select(Message)
+                    .where(
+                        Message.session_id == session_id,
+                        Message.message_type == MT.PROPOSAL,
+                    )
+                    .order_by(Message.seq.desc())
+                )
+                proposal_msg = result.scalars().first()
+                proposal = proposal_msg.content if proposal_msg else ""
+
+                session = await db.get(PlanningSession, session_id)
+                user_id = session.user_id if session else None
+                user_input = session.input_text if session else ""
+
+            model, provider = await self._resolve_model_and_provider(user_id=user_id)
+            await self._ensure_providers_loaded(user_id=user_id)
+
+            leader = LeaderAgent(
+                llm_router=self.llm_router,
+                event_bus=self.event_bus,
+                model=model,
+                provider=provider,
+            )
+            reviewer = ReviewerAgent(
+                llm_router=self.llm_router,
+                event_bus=self.event_bus,
+                model=model,
+                provider=provider,
+            )
+
+            await leader.broadcast_capabilities(session_id)
+            await reviewer.broadcast_capabilities(session_id)
+
+            # Leader acknowledges the revision request
+            await leader.save_message(
+                session_id,
+                f"收到你的修改意见，我来组织团队修改方案。",
+                message_type=MessageType.CHAT,
+                category="coordination",
+            )
+
+            # Refine proposal with user feedback
+            leader.emit_status(session_id, "refining_proposal", "正在根据你的意见修改方案...")
+            refined_proposal = await leader._refine_proposal_with_review(
+                session_id, proposal, f"用户退回修改意见：{user_feedback}"
+            )
+            if refined_proposal:
+                proposal = refined_proposal
+
+            # Review-Refine loop (same as start_planning)
+            MAX_REVIEW_ROUNDS = 3
+            for review_round in range(1, MAX_REVIEW_ROUNDS + 1):
+                await leader.save_message(
+                    session_id,
+                    f"修改后的方案已生成，请 Reviewer 进行审查（第 {review_round} 轮）。",
+                    message_type=MessageType.CHAT,
+                    category="coordination",
+                )
+                review_result = await reviewer.review(session_id, proposal, review_type="proposal")
+                verdict = ReviewerAgent.parse_verdict(review_result)
+
+                if verdict == "APPROVE":
+                    await leader.save_message(
+                        session_id,
+                        "审查通过，修改后的方案质量达标。",
+                        message_type=MessageType.CHAT,
+                        category="coordination",
+                    )
+                    break
+
+                if review_result:
+                    leader.emit_status(
+                        session_id, "refining_proposal",
+                        f"正在根据审查意见继续修改方案（第 {review_round} 轮）..."
+                    )
+                    await leader.save_message(
+                        session_id,
+                        f"审查发现仍有不足，继续修改（第 {review_round} 轮）...",
+                        message_type=MessageType.CHAT,
+                        category="coordination",
+                    )
+                    refined = await leader._refine_proposal_with_review(
+                        session_id, proposal, review_result
+                    )
+                    if refined:
+                        proposal = refined
+                else:
+                    break
+            else:
+                await leader.save_message(
+                    session_id,
+                    f"已达到最大审查轮数（{MAX_REVIEW_ROUNDS} 轮），当前方案将提交审批。",
+                    message_type=MessageType.CHAT,
+                    category="coordination",
+                )
+
+            # Back to AWAITING_APPROVAL
+            await self._update_status(session_id, PlanningStatus.AWAITING_APPROVAL)
+
+            # Regenerate proposal artifact
+            try:
+                from app.services.artifact import artifact_service
+                await artifact_service.generate_proposal(session_id)
+            except Exception as ae:
+                logger.warning(f"Proposal artifact regeneration failed: {ae}")
+
+            await self._save_checkpoint(session_id, "business", "proposal_revised", "Proposal revised after user feedback and re-reviewed")
+
+        except Exception as e:
+            logger.exception(f"Proposal revision failed for session {session_id}")
+            await self._update_status(session_id, PlanningStatus.FAILED, detail=str(e))
+            self.event_bus.publish(session_id, Event(
+                event="error",
+                data={"message": f"Proposal revision failed: {str(e)}"},
             ))
         finally:
             self._running_sessions.discard(session_id)

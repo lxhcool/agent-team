@@ -813,6 +813,45 @@ class LeaderAgent(BaseAgent):
         self.emit_typing(session_id, False)
         return refined_text if refined_text else None
 
+    async def _refine_plan_with_review(
+        self, session_id: str, plan_text: str, review: str
+    ) -> Optional[str]:
+        """Refine the execution plan based on reviewer feedback."""
+        self.emit_typing(session_id, True)
+
+        messages = [
+            LLMMessage(role="system", content=self.PLAN_SYSTEM_PROMPT),
+            LLMMessage(role="user", content=(
+                f"原始执行计划：\n{plan_text}\n\n"
+                f"审查意见：\n{review}\n\n"
+                f"请根据审查意见优化执行计划，保留合理的任务分解，改进指出的问题。"
+                f"输出格式与原始计划相同（JSON 数组）。"
+            )),
+        ]
+
+        full_content = []
+        try:
+            async for chunk in self.call_llm_stream(messages, session_id, max_tokens=4096, temperature=0.3):
+                full_content.append(chunk)
+                self.emit_stream_chunk(session_id, chunk)
+        except LLMError:
+            content = await self.call_llm(messages, session_id, max_tokens=4096, temperature=0.3)
+            full_content.append(content)
+            self.emit_stream_chunk(session_id, content)
+
+        refined_text = "".join(full_content)
+        if refined_text:
+            msg = await self.save_message(
+                session_id, refined_text,
+                message_type=MessageType.PLAN,
+                category="execution_plan_refined",
+            )
+            self.emit_message(session_id, msg)
+
+        self.emit_stream_end(session_id)
+        self.emit_typing(session_id, False)
+        return refined_text if refined_text else None
+
 
 class TemplateAgent(BaseAgent):
     """An agent created from an AgentTemplate with custom system prompt and behavior.
@@ -981,7 +1020,18 @@ class ReviewerAgent(BaseAgent):
 4. 提出具体的改进建议
 5. 确保方案符合最佳实践
 
-请用中文回答，指出具体问题并给出改进建议。"""
+【审查结论格式 — 必须遵守】
+你的审查输出必须以以下格式结尾（这是自动解析的唯一格式）：
+
+---REVIEW_VERDICT: APPROVE---
+或
+---REVIEW_VERDICT: NEEDS_REVISION---
+
+判断标准：
+- APPROVE：方案整体可行，仅有微小建议，不需要修改即可进入下一阶段
+- NEEDS_REVISION：方案存在明显不足（需求遗漏、架构缺陷、风险未缓解、关键模块缺失等），必须修改后重新审查
+
+在结论之前，请用中文详细说明审查发现的问题和改进建议。"""
 
     def __init__(self, llm_router: LLMRouter, event_bus: EventBus, model: Optional[str] = None, provider: Optional[str] = None):
         super().__init__(
@@ -1010,9 +1060,10 @@ class ReviewerAgent(BaseAgent):
         self.emit_status(session_id, "reviewing", "正在审查...")
         self.emit_typing(session_id, True)
 
+        type_label = "技术方案" if review_type == "proposal" else "执行计划" if review_type == "plan" else "代码"
         messages = [
             LLMMessage(role="system", content=self.REVIEW_SYSTEM_PROMPT),
-            LLMMessage(role="user", content=f"请审查以下{'技术方案' if review_type == 'proposal' else '代码'}：\n\n{content}"),
+            LLMMessage(role="user", content=f"请审查以下{type_label}：\n\n{content}"),
         ]
 
         full_content = []
@@ -1031,6 +1082,20 @@ class ReviewerAgent(BaseAgent):
         self.emit_stream_end(session_id)
         self.emit_typing(session_id, False)
         return review_text
+
+    @staticmethod
+    def parse_verdict(review_text: str) -> str:
+        """Parse the review verdict from review output.
+
+        Returns:
+            'APPROVE' or 'NEEDS_REVISION'
+        """
+        import re
+        match = re.search(r'---REVIEW_VERDICT:\s*(APPROVE|NEEDS_REVISION)---', review_text)
+        if match:
+            return match.group(1)
+        # Fallback: if no explicit verdict, treat as needing revision if text is long
+        return "NEEDS_REVISION" if len(review_text) > 200 else "APPROVE"
 
 
 class AgentFactory:

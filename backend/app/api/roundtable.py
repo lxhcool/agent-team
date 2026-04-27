@@ -639,8 +639,7 @@ async def promote_to_planning(
     if not session:
         raise HTTPException(status_code=404, detail="Roundtable session not found")
 
-    if session.status == RoundtableStatus.CONVERTED:
-        raise HTTPException(status_code=400, detail="Session already converted")
+    # Allow re-promoting even if already converted (e.g. planning session was deleted)
 
     # Get all messages for the roundtable
     result = await db.execute(

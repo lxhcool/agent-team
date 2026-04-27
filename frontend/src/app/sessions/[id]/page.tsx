@@ -7,10 +7,14 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import {
-  ArrowLeft, Send, Sun, Moon, Play, CheckCircle, AlertTriangle,
-  RotateCcw, Download, FileText, ListTodo, Paperclip, X, Bot,
-  Loader2, ChevronDown, ChevronUp, Sparkles, Clock, Zap, StopCircle, PanelRightOpen, PanelRightClose
+  ArrowLeft, Sun, Moon, Play, CheckCircle, AlertTriangle,
+  RotateCcw, Download, FileText, ListTodo, X, Bot,
+  Loader2, ChevronDown, ChevronUp, Sparkles, Clock, Zap, StopCircle, PanelRightOpen, PanelRightClose,
+  Copy, Check, Terminal, MessageSquare,
 } from "lucide-react";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { ChatInputBar } from "@/components/chat-input-bar";
+import { useAuth } from "@/lib/auth";
 
 // ===== Types =====
 type Message = {
@@ -80,6 +84,26 @@ function CollapsibleContent({ content }: { content: string }) {
   );
 }
 
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }, [text]);
+  return (
+    <button
+      onClick={handleCopy}
+      className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-medium text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--surface-elevated)]/80 cursor-pointer transition-all"
+      title="复制"
+    >
+      {copied ? <Check size={10} className="text-[var(--success)]" /> : <Copy size={10} />}
+      {copied ? "已复制" : "复制"}
+    </button>
+  );
+}
+
 const AGENT_COLORS: Record<string, { bubble: string; name: string; bg: string }> = {
   leader: { bubble: "bubble-p0", name: "pname-0", bg: "from-violet-500/20 to-purple-500/10" },
   researcher: { bubble: "bubble-p1", name: "pname-1", bg: "from-blue-500/20 to-indigo-500/10" },
@@ -132,12 +156,12 @@ const TASK_STATUS_BG: Record<string, string> = {
 export default function SessionPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const { confirm, ConfirmDialog } = useConfirm();
+  const { token: authToken } = useAuth();
   const [session, setSession] = useState<PlanningSession | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
-  const [inputText, setInputText] = useState("");
-  const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
   const [sending, setSending] = useState(false);
   const [streamingAgent, setStreamingAgent] = useState<string | null>(null);
   const [streamingContent, setStreamingContent] = useState("");
@@ -148,7 +172,6 @@ export default function SessionPage() {
   const [statusDetail, setStatusDetail] = useState<string>("");
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const streamingBufferRef = useRef<string>("");
   const streamingRafRef = useRef<number | null>(null);
@@ -325,13 +348,13 @@ export default function SessionPage() {
     document.documentElement.classList.toggle("dark", next === "dark");
   }, [theme]);
 
-  const sendMessage = useCallback(async () => {
-    if ((!inputText.trim() && uploadedFiles.length === 0) || sending) return;
+  const sendMessage = useCallback(async (text: string, files: File[], _model: string | null) => {
+    if ((!text.trim() && files.length === 0) || sending) return;
     setSending(true);
     try {
       let attachmentInfos: string[] = [];
-      if (uploadedFiles.length > 0) {
-        for (const f of uploadedFiles) {
+      if (files.length > 0) {
+        for (const f of files) {
           try {
             const formData = new FormData();
             formData.append("file", f);
@@ -352,7 +375,7 @@ export default function SessionPage() {
         }
       }
 
-      let content = inputText.trim();
+      let content = text.trim();
       if (attachmentInfos.length > 0) {
         content = content ? `${content}\n\n${attachmentInfos.join("\n")}` : attachmentInfos.join("\n");
       }
@@ -364,19 +387,29 @@ export default function SessionPage() {
           body: JSON.stringify({ content, sender: "user" }),
         });
       }
-      setInputText("");
-      setUploadedFiles([]);
     } catch (e) {
       console.error("Failed to send message:", e);
     } finally {
       setSending(false);
-      inputRef.current?.focus();
     }
-  }, [id, inputText, uploadedFiles, sending]);
+  }, [id, sending]);
 
   const handleApprove = useCallback(async () => {
-    if (!confirm("确认审批此方案？")) return;
+    if (!await confirm({ description: "确认审批此方案？" })) return;
     try { await fetch(`/api/planning-sessions/${id}/approve`, { method: "POST" }); } catch {}
+  }, [id, confirm]);
+
+  const handleRevise = useCallback(async () => {
+    const feedback = prompt("请输入修改意见，Agent 团队将根据你的反馈修改方案：");
+    if (!feedback?.trim()) return;
+    try {
+      await fetch(`/api/planning-sessions/${id}/revise`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ feedback: feedback.trim() }),
+      });
+      setSession((prev) => prev ? { ...prev, status: "planning" } : prev);
+    } catch {}
   }, [id]);
 
   const handleStart = useCallback(async () => {
@@ -391,7 +424,7 @@ export default function SessionPage() {
   }, [id]);
 
   const handleInterrupt = useCallback(async () => {
-    if (!confirm("确认中断当前流程？所有进行中的生成将被终止。")) return;
+    if (!await confirm({ description: "确认中断当前流程？所有进行中的生成将被终止。", variant: "destructive" })) return;
     try {
       await fetch(`/api/planning-sessions/${id}/interrupt`, { method: "POST" });
       setStreamingAgent(null);
@@ -549,6 +582,13 @@ export default function SessionPage() {
                 审批方案
               </button>
             )}
+            {session.status === "awaiting_approval" && (
+              <button onClick={handleRevise}
+                className="rounded-xl border border-[var(--warning)] px-3.5 py-2 text-xs font-semibold text-[var(--warning)] cursor-pointer hover:bg-[var(--warning-soft)] transition-all flex items-center gap-1.5">
+                <RotateCcw size={12} />
+                退回修改
+              </button>
+            )}
             {(session.status === "awaiting_approval" || session.status === "generating_plan" || session.status === "completed") && (
               <button onClick={handleExportProposal}
                 className="rounded-xl border border-[var(--card-border)] px-3.5 py-2 text-xs font-semibold text-[var(--foreground)] cursor-pointer hover:bg-[var(--surface-elevated)] transition-all flex items-center gap-1.5"
@@ -654,92 +694,18 @@ export default function SessionPage() {
         </div>
 
         {/* Input bar */}
-        <div className="border-t border-[var(--card-border)] bg-[var(--card)]/80 backdrop-blur-xl px-5 py-3 shrink-0"
-          onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
-          onDrop={(e) => {
-            e.preventDefault(); e.stopPropagation();
-            const files = Array.from(e.dataTransfer.files);
-            const MAX_SIZE = 10 * 1024 * 1024;
-            const valid = files.filter(f => {
-              if (f.size > MAX_SIZE) { alert(`文件 ${f.name} 超过 10MB 限制`); return false; }
-              return true;
-            });
-            if (valid.length > 0) setUploadedFiles(prev => [...prev, ...valid]);
-          }}
-          onPaste={(e) => {
-            const items = e.clipboardData?.items;
-            if (!items) return;
-            const files: File[] = [];
-            for (const item of Array.from(items)) {
-              if (item.kind === "file") {
-                const f = item.getAsFile();
-                if (f) files.push(f);
-              }
-            }
-            const MAX_SIZE = 10 * 1024 * 1024;
-            const valid = files.filter(f => {
-              if (f.size > MAX_SIZE) { alert(`文件 ${f.name} 超过 10MB 限制`); return false; }
-              return true;
-            });
-            if (valid.length > 0) setUploadedFiles(prev => [...prev, ...valid]);
-          }}
-        >
-          {uploadedFiles.length > 0 && (
-            <div className="mb-2.5 flex flex-wrap gap-2">
-              {uploadedFiles.map((f, i) => (
-                <span key={i} className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--card-border)] bg-[var(--surface-elevated)] px-2.5 py-1 text-xs shadow-sm">
-                  <Paperclip size={10} className="text-[var(--accent)]" />
-                  <span className="max-w-[120px] truncate">{f.name}</span>
-                  <span className="text-[var(--muted)]">({(f.size / 1024).toFixed(1)}KB)</span>
-                  <button onClick={() => setUploadedFiles(prev => prev.filter((_, idx) => idx !== i))} className="text-[var(--muted)] hover:text-[var(--danger)] cursor-pointer transition-colors ml-0.5"><X size={12} /></button>
-                </span>
-              ))}
-            </div>
-          )}
-          <div className="flex items-center gap-2.5">
-            <label className="flex size-10 items-center justify-center rounded-xl border border-[var(--card-border)] bg-[var(--surface-elevated)] text-[var(--muted)] cursor-pointer hover:border-[var(--accent)] hover:text-[var(--accent)] transition-all shadow-sm" title="上传文件">
-              <Paperclip size={16} />
-              <input
-                type="file"
-                multiple
-                className="hidden"
-                accept=".md,.txt,.json,.yaml,.yml,.py,.js,.ts,.tsx,.jsx,.css,.html,.sql,.sh,.toml,.xml,.csv,.env,.gitignore,.dockerfile,.makefile"
-                onChange={(e) => {
-                  const files = Array.from(e.target.files || []);
-                  const MAX_SIZE = 10 * 1024 * 1024;
-                  const valid = files.filter(f => {
-                    if (f.size > MAX_SIZE) { alert(`文件 ${f.name} 超过 10MB 限制`); return false; }
-                    return true;
-                  });
-                  setUploadedFiles(prev => [...prev, ...valid]);
-                  e.target.value = "";
-                }}
-              />
-            </label>
-            <div className="flex-1 flex items-center rounded-xl border border-[var(--card-border)] bg-[var(--surface-elevated)] shadow-sm transition-all focus-within:border-[var(--accent)] focus-within:shadow-[var(--shadow-glow)]">
-              <input
-                ref={inputRef}
-                type="text"
-                value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter" && inputText.trim()) sendMessage(); }}
-                placeholder={
-                  session.status === "created" ? "输入补充说明，或点击「开始分析」..."
-                  : session.status === "awaiting_approval" ? "输入修改意见，或点击「审批方案」..."
-                  : "补充说明或追问..."
-                }
-                className="h-10 flex-1 bg-transparent px-4 text-sm outline-none placeholder:text-[var(--muted)]"
-              />
-              <button
-                onClick={sendMessage}
-                disabled={!inputText.trim() || sending}
-                className="flex size-9 mr-0.5 items-center justify-center rounded-lg bg-[var(--accent)] text-white cursor-pointer hover:bg-[var(--accent-hover)] disabled:opacity-30 disabled:cursor-not-allowed transition-all shadow-sm"
-              >
-                <Send size={14} />
-              </button>
-            </div>
-          </div>
-        </div>
+        <ChatInputBar
+          placeholder={
+            session.status === "created" ? "输入补充说明后发送，将自动开始分析..."
+            : session.status === "awaiting_approval" ? "输入修改意见，或点击「审批方案」/「退回修改」..."
+            : session.status === "completed" ? "追问或补充说明..."
+            : session.status === "failed" || session.status === "cancelled" ? "当前会话已结束"
+            : "随时输入补充说明，Agent 会参考你的输入..."
+          }
+          disabled={session.status === "failed" || session.status === "cancelled"}
+          sending={sending}
+          onSend={sendMessage}
+        />
       </div>
 
       {/* Right sidebar - Proposal / Plan */}
@@ -833,18 +799,161 @@ export default function SessionPage() {
                   </div>
                 )}
                 {session.status === "completed" && (
-                  <div className="mt-4 rounded-xl border border-[var(--accent)]/20 bg-[var(--accent-soft)] p-4">
-                    <h3 className="text-xs font-bold text-[var(--accent)] mb-2 flex items-center gap-1.5">
-                      <Zap size={12} />
-                      CLI 拉取命令
-                    </h3>
-                    <code className="text-[10px] text-[var(--foreground)] break-all select-all block bg-[var(--surface-elevated)] rounded-lg p-2.5">
-                      agent-team pull-plan --plan-id plan_{id} --server http://localhost:{process.env.NEXT_PUBLIC_BACKEND_PORT || '8200'}
-                    </code>
+                  <div className="mt-4 space-y-3">
+                    {/* Header */}
+                    <div className="rounded-xl border border-[var(--accent)]/20 bg-[var(--accent-soft)] p-4">
+                      <h3 className="text-xs font-bold text-[var(--accent)] mb-1.5 flex items-center gap-1.5">
+                        <Terminal size={12} />
+                        在本地执行此计划
+                      </h3>
+                      <p className="text-[10px] text-[var(--muted)] leading-relaxed">
+                        执行计划需要通过 CLI 工具在本地项目目录中运行。AI 会根据任务自动生成代码并写入你的项目。
+                      </p>
+                    </div>
+
+                    {/* Step 1: Install CLI (one-time) */}
+                    <div className="rounded-xl border border-[var(--card-border)] bg-[var(--surface-elevated)]/50 p-3.5">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-[var(--accent)] text-[10px] font-bold text-white">1</span>
+                        <span className="text-xs font-semibold">安装 CLI 工具（仅需一次）</span>
+                      </div>
+                      <p className="text-[10px] text-[var(--muted)] mb-2 leading-relaxed">
+                        安装后 <code className="font-mono text-[var(--accent)]">agent-team</code> 即为全局可用命令，任何目录下都能直接使用。
+                      </p>
+                      {/* Official install */}
+                      <div className="flex items-center justify-between rounded-lg bg-[var(--code-bg)] p-2">
+                        <div className="min-w-0 mr-2">
+                          <span className="text-[9px] text-[var(--muted)] block mb-0.5 font-mono"># 正式环境：从 PyPI 安装</span>
+                          <code className="text-[10px] text-[var(--code-fg)] font-mono">pip3 install agent-team</code>
+                        </div>
+                        <CopyButton text="pip3 install agent-team" />
+                      </div>
+                      {/* Dev install */}
+                      <div className="mt-2 rounded-lg border border-dashed border-[var(--card-border)] p-2.5">
+                        <p className="text-[10px] font-medium text-[var(--foreground-secondary)] mb-1.5">开发模式（从源码安装）</p>
+                        <p className="text-[10px] text-[var(--muted)] mb-1.5 leading-relaxed">
+                          如果你是在本地开发 agent-team，需要从源码安装。进入项目根目录后执行：
+                        </p>
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between rounded-lg bg-[var(--code-bg)] p-2">
+                            <div className="min-w-0 mr-2">
+                              <code className="text-[10px] text-[var(--code-fg)] font-mono">cd /path/to/agent-team && pip3 install -e ./cli</code>
+                            </div>
+                            <CopyButton text="cd /path/to/agent-team && pip3 install -e ./cli" />
+                          </div>
+                        </div>
+                      </div>
+                      <p className="mt-2 text-[9px] text-[var(--muted)] leading-relaxed">
+                        安装成功后，运行 <code className="font-mono text-[var(--accent)]">agent-team --help</code> 验证。看到帮助信息说明安装 OK。
+                      </p>
+                    </div>
+
+                    {/* Step 2: cd to YOUR project + optional init */}
+                    <div className="rounded-xl border border-[var(--card-border)] bg-[var(--surface-elevated)]/50 p-3.5">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-[var(--accent)] text-[10px] font-bold text-white">2</span>
+                        <span className="text-xs font-semibold">进入你的目标项目目录</span>
+                      </div>
+                      <p className="text-[10px] text-[var(--muted)] mb-2 leading-relaxed">
+                        <span className="font-medium text-[var(--foreground)]">切到你想让 AI 生成代码的目标项目目录</span>（不是 agent-team 本身），后续所有代码都会写入这个目录。
+                      </p>
+                      <div className="flex items-center justify-between rounded-lg bg-[var(--code-bg)] p-2">
+                        <div className="min-w-0 mr-2">
+                          <span className="text-[9px] text-[var(--muted)] block mb-0.5 font-mono"># 切到你的项目目录</span>
+                          <code className="text-[10px] text-[var(--code-fg)] font-mono">cd /your/project</code>
+                        </div>
+                        <CopyButton text="cd /your/project" />
+                      </div>
+                      <div className="mt-2.5 rounded-lg border border-[var(--accent)]/20 bg-[var(--accent-soft)]/30 p-2.5">
+                        <p className="text-[10px] font-medium text-[var(--accent)] mb-1 flex items-center gap-1">
+                          <Zap size={10} />
+                          LLM 配置自动获取
+                        </p>
+                        <p className="text-[10px] text-[var(--muted)] leading-relaxed">
+                          只要步骤 3 的命令带上了 <code className="font-mono text-[var(--accent)]">--token</code>，CLI 会自动从服务器获取你在网页端配置的 LLM API Key，无需本地重复配置。
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Step 3: Execute */}
+                    <div className="rounded-xl border border-[var(--accent)]/20 bg-[var(--accent-soft)]/50 p-3.5">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-[var(--accent)] text-[10px] font-bold text-white">3</span>
+                        <span className="text-xs font-semibold">一键执行计划</span>
+                      </div>
+                      <p className="text-[10px] text-[var(--muted)] mb-2 leading-relaxed">
+                        在你的项目目录下运行此命令。带上 Token 后会自动从服务器拉取 LLM 配置，无需手动设置 API Key。
+                      </p>
+                      {authToken && (
+                        <div className="mb-2 rounded-lg border border-[var(--warning)]/20 bg-[var(--warning-soft)]/50 p-2">
+                          <p className="text-[10px] text-[var(--muted)] leading-relaxed">
+                            <span className="font-medium text-[var(--foreground)]">认证 Token：</span>点击下方命令会自动带上你的 Token。也可手动复制：
+                          </p>
+                          <div className="mt-1 flex items-center justify-between rounded bg-[var(--code-bg)] px-2 py-1">
+                            <code className="text-[9px] text-[var(--code-fg)] font-mono break-all select-all">{authToken}</code>
+                            <CopyButton text={authToken} />
+                          </div>
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between rounded-lg bg-[var(--code-bg)] p-2.5">
+                        <code className="text-[10px] text-[var(--code-fg)] font-mono break-all select-all">
+                          agent-team{authToken ? ` --token ${authToken.slice(0, 8)}...` : ""} execute --plan-id plan_{id} --server http://localhost:{process.env.NEXT_PUBLIC_BACKEND_PORT || '8200'}
+                        </code>
+                        <CopyButton text={`agent-team${authToken ? ` --token ${authToken}` : ""} execute --plan-id plan_${id} --server http://localhost:${process.env.NEXT_PUBLIC_BACKEND_PORT || '8200'}`} />
+                      </div>
+                    </div>
+
+                    {/* Step 4: After execution */}
+                    <div className="rounded-xl border border-[var(--card-border)] bg-[var(--surface-elevated)]/50 p-3.5">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-[var(--success)] text-[10px] font-bold text-white">4</span>
+                        <span className="text-xs font-semibold">查看结果</span>
+                      </div>
+                      <p className="text-[10px] text-[var(--muted)] mb-2 leading-relaxed">
+                        执行完成后，结果会保存在项目目录下的 JSON 文件中。你可以把结果推送到服务器以便在 Web 端查看：
+                      </p>
+                      <div className="flex items-center justify-between rounded-lg bg-[var(--code-bg)] p-2">
+                        <code className="text-[10px] text-[var(--code-fg)] font-mono break-all">agent-team push-result --result-file execution_result_xxx.json --server http://localhost:{process.env.NEXT_PUBLIC_BACKEND_PORT || '8200'}</code>
+                        <CopyButton text={`agent-team push-result --result-file execution_result_xxx.json --server http://localhost:${process.env.NEXT_PUBLIC_BACKEND_PORT || '8200'}`} />
+                      </div>
+                    </div>
+
+                    {/* Quick reference */}
+                    <div className="rounded-xl border border-dashed border-[var(--card-border)] p-3">
+                      <p className="text-[10px] font-medium text-[var(--foreground-secondary)] mb-1.5">其他选项：</p>
+                      <div className="space-y-1 text-[10px] text-[var(--muted)]">
+                        <p>• <code className="font-mono text-[var(--accent)]">--step-by-step</code> 逐步执行（每个任务前需确认）</p>
+                        <p>• <code className="font-mono text-[var(--accent)]">--safe-mode</code> 安全模式（仅执行只读/验证操作）</p>
+                        <p>• <code className="font-mono text-[var(--accent)]">--project ./my-app</code> 指定项目目录（默认当前目录）</p>
+                      </div>
+                    </div>
+
+                    {/* Interactive chat mode */}
+                    <div className="rounded-xl border border-[var(--accent)]/20 bg-[var(--accent-soft)]/30 p-3.5">
+                      <h4 className="text-xs font-bold text-[var(--accent)] mb-1.5 flex items-center gap-1.5">
+                        <MessageSquare size={12} />
+                        有 Bug？进聊天模式修
+                      </h4>
+                      <p className="text-[10px] text-[var(--muted)] mb-2 leading-relaxed">
+                        执行完发现 bug？在项目目录下进入交互模式，跟 Agent 直接对话：
+                      </p>
+                      <div className="flex items-center justify-between rounded-lg bg-[var(--code-bg)] p-2">
+                        <code className="text-[10px] text-[var(--code-fg)] font-mono break-all select-all">
+                          agent-team{authToken ? ` --token ${authToken.slice(0, 8)}...` : ""} chat
+                        </code>
+                        <CopyButton text={`agent-team${authToken ? ` --token ${authToken}` : ""} chat`} />
+                      </div>
+                      <p className="mt-2 text-[10px] text-[var(--muted)] leading-relaxed">
+                        进入后直接打字聊天就行，比如「登录按钮点了没反应，帮我修一下」。
+                      </p>
+                    </div>
+
+                    {/* View execution result button */}
                     <button
                       onClick={() => router.push(`/executions/plan_${id}`)}
-                      className="mt-3 w-full rounded-xl bg-[var(--accent)] px-3 py-2.5 text-xs font-semibold text-white cursor-pointer hover:bg-[var(--accent-hover)] transition-all shadow-md shadow-indigo-500/20"
+                      className="w-full rounded-xl bg-[var(--accent)] px-3 py-2.5 text-xs font-semibold text-white cursor-pointer hover:bg-[var(--accent-hover)] transition-all shadow-md shadow-indigo-500/20 flex items-center justify-center gap-1.5"
                     >
+                      <Zap size={12} />
                       查看执行结果
                     </button>
                   </div>
@@ -854,6 +963,7 @@ export default function SessionPage() {
           </div>
         </div>
       )}
+      {ConfirmDialog}
     </div>
   );
 }

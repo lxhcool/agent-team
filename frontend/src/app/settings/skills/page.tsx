@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog, DialogContent, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 
 type Skill = {
   name: string;
@@ -32,6 +33,7 @@ const emptyForm: SkillForm = {
 };
 
 export default function SkillsPage() {
+  const { confirm, ConfirmDialog } = useConfirm();
   const [skills, setSkills] = useState<Skill[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -89,7 +91,7 @@ export default function SkillsPage() {
   };
 
   const deleteSkill = async (name: string) => {
-    if (!confirm(`确定删除 Skill "${name}"？`)) return;
+    if (!await confirm({ description: `确定删除 Skill "${name}"？`, variant: "destructive" })) return;
     try { await fetch(`/api/settings/skills/${name}`, { method: "DELETE" }); await fetchSkills(); } catch {}
   };
 
@@ -367,6 +369,7 @@ export default function SkillsPage() {
           </div>
         </DialogContent>
       </Dialog>
+      {ConfirmDialog}
     </div>
   );
 }

@@ -12,6 +12,7 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 
 type SkillRef = { name: string; display_name?: string };
 
@@ -76,6 +77,7 @@ const ROLE_COLORS: Record<string, string> = {
 };
 
 export default function AgentsPage() {
+  const { confirm, ConfirmDialog } = useConfirm();
   const [agents, setAgents] = useState<AgentTemplate[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [loading, setLoading] = useState(true);
@@ -160,7 +162,7 @@ export default function AgentsPage() {
   };
 
   const deleteAgent = async (name: string) => {
-    if (!confirm(`确定删除 Agent "${name}"？`)) return;
+    if (!await confirm({ description: `确定删除 Agent "${name}"？`, variant: "destructive" })) return;
     try { await fetch(`/api/settings/agents/${name}`, { method: "DELETE" }); await fetchAgents(); } catch {}
   };
 
@@ -407,7 +409,7 @@ export default function AgentsPage() {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">角色</label>
-                    <Select value={form.role} onValueChange={(v) => setForm({ ...form, role: v })}>
+                    <Select value={form.role} onValueChange={(v) => v != null && setForm({ ...form, role: v })}>
                       <SelectTrigger className="w-full h-9 text-sm">
                         <SelectValue />
                       </SelectTrigger>
@@ -422,7 +424,7 @@ export default function AgentsPage() {
                   </div>
                   <div>
                     <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">风险等级</label>
-                    <Select value={form.risk_level} onValueChange={(v) => setForm({ ...form, risk_level: v })}>
+                    <Select value={form.risk_level} onValueChange={(v) => v != null && setForm({ ...form, risk_level: v })}>
                       <SelectTrigger className="w-full h-9 text-sm">
                         <SelectValue />
                       </SelectTrigger>
@@ -550,6 +552,7 @@ export default function AgentsPage() {
           </div>
         </DialogContent>
       </Dialog>
+      {ConfirmDialog}
     </div>
   );
 }

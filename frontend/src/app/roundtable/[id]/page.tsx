@@ -7,10 +7,12 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import {
-  ArrowLeft, Sun, Moon, Send, CheckCircle, AlertTriangle,
+  ArrowLeft, Sun, Moon, CheckCircle, AlertTriangle,
   Loader2, Download, Globe, Star, Sparkles, Zap, MessageCircle,
-  ChevronRight, Users, Play, StopCircle
+  ChevronRight, Users, Play, StopCircle,
 } from "lucide-react";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { ChatInputBar } from "@/components/chat-input-bar";
 
 // ===== Types =====
 type RoundtableSession = {
@@ -45,7 +47,7 @@ function CollapsibleContent({ content }: { content: string }) {
 
   if (!isLong) {
     return (
-      <div className="prose prose-sm max-w-none dark:prose-invert">
+      <div className="chat-md">
         <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{content}</ReactMarkdown>
       </div>
     );
@@ -55,7 +57,7 @@ function CollapsibleContent({ content }: { content: string }) {
 
   return (
     <div>
-      <div className="prose prose-sm max-w-none dark:prose-invert">
+      <div className="chat-md">
         <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{displayContent}</ReactMarkdown>
       </div>
       <button
@@ -69,19 +71,22 @@ function CollapsibleContent({ content }: { content: string }) {
   );
 }
 
-const AGENT_COLORS: Record<string, { bubble: string; name: string; avatar: string; bg: string }> = {
-  leader: { bubble: "bubble-p0", name: "pname-0", avatar: "L", bg: "from-violet-500/20 to-purple-500/10" },
-  analyst: { bubble: "bubble-p1", name: "pname-1", avatar: "A", bg: "from-blue-500/20 to-indigo-500/10" },
-  researcher: { bubble: "bubble-p1", name: "pname-1", avatar: "R", bg: "from-blue-500/20 to-indigo-500/10" },
-  architect: { bubble: "bubble-p2", name: "pname-2", avatar: "Ar", bg: "from-amber-500/20 to-yellow-500/10" },
-  planner: { bubble: "bubble-p2", name: "pname-2", avatar: "P", bg: "from-amber-500/20 to-yellow-500/10" },
-  developer: { bubble: "bubble-p3", name: "pname-3", avatar: "D", bg: "from-red-500/20 to-rose-500/10" },
-  reviewer: { bubble: "bubble-p4", name: "pname-4", avatar: "Rv", bg: "from-teal-500/20 to-emerald-500/10" },
-  tester: { bubble: "bubble-p4", name: "pname-4", avatar: "T", bg: "from-teal-500/20 to-emerald-500/10" },
-  user: { bubble: "bubble-human", name: "pname-human", avatar: "你", bg: "from-indigo-500/20 to-violet-500/10" },
-  system: { bubble: "", name: "", avatar: "S", bg: "from-gray-500/20 to-slate-500/10" },
-  moderator: { bubble: "bubble-p5", name: "pname-5", avatar: "M", bg: "from-pink-500/20 to-fuchsia-500/10" },
+const AGENT_COLORS: Record<string, { bubble: string; name: string }> = {
+  leader: { bubble: "bubble-p0", name: "pname-0" },
+  analyst: { bubble: "bubble-p1", name: "pname-1" },
+  researcher: { bubble: "bubble-p1", name: "pname-1" },
+  architect: { bubble: "bubble-p2", name: "pname-2" },
+  planner: { bubble: "bubble-p2", name: "pname-2" },
+  developer: { bubble: "bubble-p3", name: "pname-3" },
+  reviewer: { bubble: "bubble-p4", name: "pname-4" },
+  tester: { bubble: "bubble-p4", name: "pname-4" },
+  user: { bubble: "bubble-human", name: "pname-human" },
+  system: { bubble: "", name: "" },
+  moderator: { bubble: "bubble-p5", name: "pname-5" },
 };
+
+const avatarUrl = (seed: string) =>
+  `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(seed)}`;
 
 const SESSION_STATUS_MAP: Record<string, { label: string; color: string; bg: string; icon: React.ReactNode }> = {
   active: { label: "讨论中", color: "var(--accent)", bg: "var(--accent-soft)", icon: <Loader2 size={10} className="animate-spin" /> },
@@ -94,10 +99,10 @@ export default function RoundtablePage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const presetParticipants = searchParams.get("participants");
+  const { confirm, ConfirmDialog } = useConfirm();
   const [session, setSession] = useState<RoundtableSession | null>(null);
   const [messages, setMessages] = useState<RoundtableMessage[]>([]);
   const [loading, setLoading] = useState(true);
-  const [inputText, setInputText] = useState("");
   const [sending, setSending] = useState(false);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -106,7 +111,6 @@ export default function RoundtablePage() {
   const [statusDetail, setStatusDetail] = useState("");
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const streamingBufferRef = useRef<string>("");
   const streamingRafRef = useRef<number | null>(null);
@@ -226,15 +230,15 @@ export default function RoundtablePage() {
       setSession((prev) => prev ? { ...prev, status: "completed" as const } : prev);
       setStreamingAgent(null);
       setStreamingContent("");
+      setStatusDetail("");
       streamingBufferRef.current = "";
-      // Don't clear statusDetail here — preserve error messages
       fetch(`/api/roundtable-sessions/${id}`)
         .then((r) => r.json())
         .then((s) => { if (s) setSession(s); })
         .catch(() => {});
     });
 
-    es.addEventListener("error", (e) => {
+    es.addEventListener("error", (e: MessageEvent) => {
       try {
         const data = JSON.parse(e.data);
         if (data.message) {
@@ -273,7 +277,7 @@ export default function RoundtablePage() {
       }
     }).catch(() => alert("无法连接后端服务")).finally(() => {
       setActionLoading(null);
-      // Don't clear statusDetail here — let SSE error events handle it
+      setStatusDetail("");
       // Clear URL params so it doesn't re-trigger on re-render
       router.replace(`/roundtable/${id}`);
     });
@@ -310,8 +314,8 @@ export default function RoundtablePage() {
     } catch {}
   }, [id]);
 
-  const sendMessage = useCallback(async () => {
-    if (!inputText.trim() || sending) return;
+  const sendMessage = useCallback(async (text: string, files: File[], _model: string | null) => {
+    if (!text.trim() || sending) return;
     setSending(true);
     setStatusDetail("");
     try {
@@ -319,20 +323,18 @@ export default function RoundtablePage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          content: inputText.trim(),
+          content: text.trim(),
           sender: "user",
           message_type: "chat",
           category: null,
         }),
       });
-      setInputText("");
       // SSE will deliver the message, no manual reload needed
     } catch {}
     finally {
       setSending(false);
-      inputRef.current?.focus();
     }
-  }, [id, inputText, sending]);
+  }, [id, sending]);
 
   // Start auto-discussion (main action for roundtable)
   const handleAutoDiscuss = useCallback(async () => {
@@ -361,7 +363,7 @@ export default function RoundtablePage() {
   }, [id, session?.max_rounds]);
 
   const handleInterrupt = useCallback(async () => {
-    if (!confirm("确认中断当前讨论？所有 Agent 的回复将被终止。")) return;
+    if (!await confirm({ description: "确认中断当前讨论？所有 Agent 的回复将被终止。", variant: "destructive" })) return;
     try {
       await fetch(`/api/roundtable-sessions/${id}/interrupt`, { method: "POST" });
       setStreamingAgent(null);
@@ -379,7 +381,7 @@ export default function RoundtablePage() {
   }, [id]);
 
   const handleNextRound = useCallback(async () => {
-    if (!confirm("确认开始下一轮讨论？")) return;
+    if (!await confirm({ description: "确认开始下一轮讨论？" })) return;
     setActionLoading("round");
     try {
       await fetch(`/api/roundtable-sessions/${id}/round`, { method: "POST" });
@@ -390,7 +392,7 @@ export default function RoundtablePage() {
   }, [id, reloadSession]);
 
   const handleComplete = useCallback(async () => {
-    if (!confirm("确认结束本次讨论？结束后将无法继续发言。")) return;
+    if (!await confirm({ description: "确认结束本次讨论？结束后将无法继续发言。" })) return;
     setActionLoading("complete");
     try {
       await fetch(`/api/roundtable-sessions/${id}/complete`, { method: "POST" });
@@ -400,14 +402,17 @@ export default function RoundtablePage() {
   }, [id, reloadSession]);
 
   const handlePromote = useCallback(async () => {
-    if (!confirm("确认将此圆桌讨论转为 Planning Session？")) return;
+    if (!await confirm({ title: "转为 Planning Session", description: "确认将此圆桌讨论转为 Planning Session？讨论结果将作为规划的输入。" })) return;
     setActionLoading("promote");
     try {
       const res = await fetch(`/api/roundtable-sessions/${id}/promote`, { method: "POST" });
       if (res.ok) {
         const data = await res.json();
-        if (data.planning_session_id) router.push(`/sessions/${data.planning_session_id}`);
-        else await reloadSession();
+        if (data.planning_session_id) {
+          // Auto-start the planning session after promotion
+          await fetch(`/api/planning-sessions/${data.planning_session_id}/start`, { method: "POST" });
+          router.push(`/sessions/${data.planning_session_id}`);
+        } else await reloadSession();
       } else alert("转换失败，请稍后重试");
     } catch {}
     finally { setActionLoading(null); }
@@ -473,8 +478,8 @@ export default function RoundtablePage() {
 
     messageElements.push(
       <div key={msg.id} className={`flex gap-3 items-start msg-appear ${isUser ? "flex-row-reverse" : ""}`}>
-        <span className={`flex size-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${ac.bg} text-xs font-bold shadow-sm`}>
-          {ac.avatar}
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg overflow-hidden">
+          <img src={avatarUrl(msg.sender)} alt={msg.sender_display || msg.sender} className="size-9 rounded-lg" />
         </span>
         <div className={isUser ? "text-right" : ""}>
           <div className={`mb-1.5 ${isUser ? "text-right" : ""}`}>
@@ -575,8 +580,8 @@ export default function RoundtablePage() {
           {/* Streaming content */}
           {streamingContent && streamingAgent && (
             <div className="flex gap-3 items-start msg-appear">
-              <span className={`flex size-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${agentConfig(streamingAgent.toLowerCase()).bg} text-xs font-bold shadow-sm`}>
-                {agentConfig(streamingAgent.toLowerCase()).avatar}
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg overflow-hidden">
+                <img src={avatarUrl(streamingAgent.toLowerCase())} alt={streamingAgent} className="size-9 rounded-lg" />
               </span>
               <div className="min-w-0 flex-1">
                 <div className="mb-1.5">
@@ -585,7 +590,7 @@ export default function RoundtablePage() {
                   </span>
                 </div>
                 <div className="chat-bubble bubble-p0 text-sm leading-relaxed streaming-cursor">
-                  <div className="prose prose-sm max-w-none dark:prose-invert">
+                  <div className="chat-md">
                     <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{streamingContent}</ReactMarkdown>
                   </div>
                 </div>
@@ -596,8 +601,8 @@ export default function RoundtablePage() {
           {/* Typing indicator */}
           {streamingAgent && !streamingContent && (
             <div className="flex gap-3 items-center msg-appear">
-              <span className={`flex size-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${agentConfig(streamingAgent.toLowerCase()).bg} text-xs font-bold shadow-sm`}>
-                {agentConfig(streamingAgent.toLowerCase()).avatar}
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg overflow-hidden">
+                <img src={avatarUrl(streamingAgent.toLowerCase())} alt={streamingAgent} className="size-9 rounded-lg" />
               </span>
               <div className="flex items-center gap-2">
                 <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg ${agentConfig(streamingAgent.toLowerCase()).name}`} style={{ background: "var(--accent-soft)" }}>
@@ -615,27 +620,12 @@ export default function RoundtablePage() {
         </div>
 
         {/* Input bar */}
-        <div className="border-t border-[var(--card-border)] bg-[var(--card)]/50 backdrop-blur-sm px-5 py-3 shrink-0">
-          <div className="flex items-center gap-2">
-            <input
-              ref={inputRef}
-              type="text"
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && inputText.trim() && isActive) sendMessage(); }}
-              placeholder={isActive ? "输入你的观点..." : "讨论已结束"}
-              disabled={!isActive}
-              className="h-10 flex-1 rounded-xl border border-[var(--card-border)] bg-[var(--surface-elevated)] px-4 text-sm outline-none transition-all focus:border-[var(--accent)] focus:shadow-[var(--shadow-glow)] disabled:opacity-50"
-            />
-            <button
-              onClick={sendMessage}
-              disabled={!inputText.trim() || sending || !isActive}
-              className="flex size-10 items-center justify-center rounded-xl bg-[var(--accent)] text-white cursor-pointer hover:bg-[var(--accent-hover)] disabled:opacity-30 transition-all shadow-md shadow-indigo-500/20"
-            >
-              <Send size={16} />
-            </button>
-          </div>
-        </div>
+        <ChatInputBar
+          placeholder={isActive ? "输入你的观点..." : "讨论已结束"}
+          disabled={!isActive}
+          sending={sending}
+          onSend={sendMessage}
+        />
       </div>
 
       {/* Right sidebar - Roundtable Info */}
@@ -735,23 +725,19 @@ export default function RoundtablePage() {
               {actionLoading === "complete" ? "处理中..." : "完成讨论"}
             </button>
           )}
-          {(isActive || session.status === "completed") && (
+          {(isActive || session.status === "completed" || session.status === "converted") && (
             <button
               onClick={handlePromote}
               disabled={actionLoading !== null}
               className="w-full rounded-xl bg-[var(--warning)] px-4 py-3 text-xs font-semibold text-white cursor-pointer hover:opacity-90 disabled:opacity-30 transition-all flex items-center justify-center gap-2"
             >
               {actionLoading === "promote" ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
-              {actionLoading === "promote" ? "转换中..." : "转为 Planning Session"}
+              {session.status === "converted" ? "重新转为 Planning Session" : actionLoading === "promote" ? "转换中..." : "转为 Planning Session"}
             </button>
-          )}
-          {session.status === "converted" && (
-            <div className="rounded-xl border border-[var(--warning)]/20 bg-[var(--warning-soft)] p-4 text-center">
-              <p className="text-xs text-[var(--warning)] font-medium">已转为 Planning Session</p>
-            </div>
           )}
         </div>
       </div>
+      {ConfirmDialog}
     </div>
   );
 }

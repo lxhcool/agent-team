@@ -63,8 +63,8 @@
   --radius-md: 0.5rem;
   --radius-lg: 0.75rem;
   --radius-xl: 1rem;
+  /* shadcn oklch tokens */
   --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
@@ -94,7 +94,36 @@
 }
 
 .dark {
-  /* === Core: Indigo === */
+  /* === shadcn oklch tokens (must come first) === */
+  --background: oklch(0.145 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
+
+  /* === Custom design tokens (override shadcn defaults) === */
   --accent: #6366f1;
   --accent-soft: rgba(99, 102, 241, 0.08);
   --accent-glow: rgba(99, 102, 241, 0.2);
@@ -109,7 +138,6 @@
   --info: #3b82f6;
   --info-soft: rgba(59, 130, 246, 0.08);
 
-  /* === Surfaces: Dark === */
   --foreground: #f1f5f9;
   --foreground-secondary: #94a3b8;
   --muted: #94a3b8;
@@ -122,52 +150,24 @@
   --card-border-hover: rgba(99, 102, 241, 0.2);
   --card-hover: #334155;
 
-  /* === Sidebar === */
   --sidebar-bg: #0b1120;
   --sidebar-border: rgba(148, 163, 184, 0.12);
   --sidebar-active: rgba(99, 102, 241, 0.12);
   --sidebar-active-text: #818cf8;
 
-  /* === Code === */
   --code-bg: #0f172a;
   --code-fg: #e2e8f0;
   --code-block-bg: #161b22;
   --code-block-fg: #e6edf3;
 
-  /* === Table === */
   --table-header-bg: #1e293b;
   --table-cell-bg: #0f172a;
 
-  /* === Effects === */
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -2px rgba(0, 0, 0, 0.2);
   --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -4px rgba(0, 0, 0, 0.3);
   --shadow-glow: 0 0 20px rgba(99, 102, 241, 0.1);
   --shadow-card: 0 1px 3px 0 rgba(0, 0, 0, 0.3);
-
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
 }
 
 * { box-sizing: border-box; }
@@ -439,40 +439,6 @@ body {
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-.dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
-}
-
 /* === Light mode: Sublime Monokai syntax colors === */
 .hljs { background: #272822 !important; color: #f8f8f2 !important; }
 .hljs-keyword, .hljs-selector-tag { color: #f92672; }
@@ -511,31 +477,27 @@ body {
 .dark .hljs-section { color: #d2a8ff; font-weight: 600; }
 .dark .hljs-tag { color: #7ee787; }
 
-/* Re-assert custom design tokens that shadcn oklch values override.
-   Shadcn uses --muted/--accent as background colors, but our design uses them as text colors. */
-:root {
-  --foreground: #0f172a;
-  --foreground-secondary: #475569;
-  --muted: #64748b;
-  --accent: #4f46e5;
-  --accent-hover: #4338ca;
-  --code-bg: #272822;
-  --code-block-bg: #272822;
-  --code-block-fg: #f8f8f2;
-}
-
-.dark {
-  --foreground: #f1f5f9;
-  --foreground-secondary: #94a3b8;
-  --muted: #94a3b8;
-  --accent: #6366f1;
-  --accent-hover: #4f46e5;
-  --code-bg: #0f172a;
-  --code-block-bg: #161b22;
-}
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
+}
+
+/* === Global cursor styles === */
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]),
+a,
+label:has(input[type="checkbox"]),
+label:has(input[type="radio"]),
+select,
+summary,
+.cursor-pointer {
+  cursor: pointer;
+}
+
+button:disabled,
+[aria-disabled="true"],
+.disabled {
+  cursor: not-allowed;
 }
