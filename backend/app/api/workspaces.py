@@ -1,17 +1,25 @@
 """Workspace API endpoints."""
 
+import hashlib
+import html as html_lib
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
+from app.core.config import settings
 from app.core.database import get_db
+from app.api.authz import get_user_from_query_token
 from app.models.models import (
+    Artifact,
     ModelSettings,
     ProviderConfig,
     User,
@@ -26,6 +34,7 @@ from app.models.models import (
 from app.llm.router import LLMError, LLMMessage, llm_router
 
 router = APIRouter()
+optional_bearer = HTTPBearer(auto_error=False)
 
 
 STAGE_DEFINITIONS = [
@@ -106,6 +115,36 @@ class StageFeedbackRequest(BaseModel):
 
 class GenerateStageRequest(BaseModel):
     instruction: Optional[str] = None
+
+
+class WorkspaceArtifactResponse(BaseModel):
+    id: str
+    workspace_id: str
+    artifact_type: str
+    filename: str
+    mime_type: str
+    size_bytes: int
+    checksum: Optional[str] = None
+    source: str
+    created_by: Optional[str] = None
+    created_at: Optional[str] = None
+    url: str
+
+    @classmethod
+    def from_model(cls, artifact: Artifact):
+        return cls(
+            id=artifact.id,
+            workspace_id=artifact.session_id,
+            artifact_type=artifact.artifact_type,
+            filename=artifact.filename,
+            mime_type=artifact.mime_type,
+            size_bytes=artifact.size_bytes,
+            checksum=artifact.checksum,
+            source=artifact.source,
+            created_by=artifact.created_by,
+            created_at=artifact.created_at.isoformat() if artifact.created_at else None,
+            url=f"/api/workspaces/{artifact.session_id}/artifacts/{artifact.id}",
+        )
 
 
 class WorkspaceStageResponse(BaseModel):
@@ -328,6 +367,229 @@ def _sanitize_llm_artifact(payload: Dict[str, Any]) -> tuple[Dict[str, Any], str
     if not content:
         content = "AI 已生成推荐，但没有返回详细产物。请提交反馈后重新生成。"
     return sanitized, content
+
+
+def _safe_text(value: Optional[str], fallback: str = "") -> str:
+    return html_lib.escape(value or fallback)
+
+
+def _stage_content(stages: List[WorkspaceStage], key: WorkspaceStageKey) -> str:
+    for stage in stages:
+        if stage.stage_key == key and stage.content:
+            return stage.content
+    return ""
+
+
+def _paragraphs(value: str) -> str:
+    lines = [line.strip() for line in value.splitlines() if line.strip()]
+    if not lines:
+        return "<p>等待补充。</p>"
+    return "\n".join(f"<p>{html_lib.escape(line)}</p>" for line in lines[:12])
+
+
+def _build_prototype_html(workspace: Workspace, stages: List[WorkspaceStage]) -> str:
+    requirement = _stage_content(stages, WorkspaceStageKey.REQUIREMENTS) or workspace.description or ""
+    product = _stage_content(stages, WorkspaceStageKey.PRODUCT)
+    ui_direction = _stage_content(stages, WorkspaceStageKey.UI_DIRECTION)
+    technical = _stage_content(stages, WorkspaceStageKey.TECHNICAL)
+    platform_label = {
+        "website": "网站",
+        "miniapp": "小程序",
+        "dashboard": "管理后台",
+        "app": "应用",
+    }.get(workspace.target_platform, workspace.target_platform)
+
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{_safe_text(workspace.name)} - Prototype</title>
+  <style>
+    :root {{
+      color-scheme: light;
+      --ink: #172033;
+      --muted: #667085;
+      --line: #e5e7eb;
+      --bg: #f6f8fb;
+      --card: #ffffff;
+      --accent: #4f46e5;
+      --accent-soft: #eef2ff;
+      --good: #0f9f6e;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+      line-height: 1.5;
+    }}
+    .shell {{ min-height: 100vh; display: flex; flex-direction: column; }}
+    header {{
+      height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 32px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255,255,255,.88);
+      backdrop-filter: blur(16px);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }}
+    .brand {{ display: flex; align-items: center; gap: 12px; font-weight: 760; }}
+    .mark {{ width: 34px; height: 34px; border-radius: 10px; background: var(--accent); display: grid; place-items: center; color: #fff; }}
+    nav {{ display: flex; gap: 20px; color: var(--muted); font-size: 14px; }}
+    .hero {{
+      padding: 58px 32px 30px;
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(320px, .95fr);
+      gap: 32px;
+      max-width: 1180px;
+      width: 100%;
+      margin: 0 auto;
+    }}
+    .eyebrow {{ color: var(--accent); font-size: 13px; font-weight: 720; margin-bottom: 12px; }}
+    h1 {{ font-size: clamp(34px, 5vw, 60px); line-height: 1.03; margin: 0; letter-spacing: 0; }}
+    .lead {{ margin-top: 18px; max-width: 640px; color: var(--muted); font-size: 17px; }}
+    .actions {{ display: flex; gap: 12px; margin-top: 26px; flex-wrap: wrap; }}
+    button {{ border: 0; border-radius: 10px; padding: 12px 16px; font-weight: 700; cursor: default; }}
+    .primary {{ background: var(--accent); color: white; }}
+    .secondary {{ background: white; color: var(--ink); border: 1px solid var(--line); }}
+    .panel {{
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      box-shadow: 0 18px 40px rgba(23, 32, 51, .08);
+      overflow: hidden;
+    }}
+    .panel-head {{ padding: 18px 20px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }}
+    .status {{ color: var(--good); background: #ecfdf5; padding: 5px 9px; border-radius: 999px; font-size: 12px; font-weight: 720; }}
+    .panel-body {{ padding: 20px; display: grid; gap: 14px; }}
+    .row {{ display: flex; gap: 12px; align-items: flex-start; padding: 14px; border: 1px solid var(--line); border-radius: 14px; }}
+    .num {{ width: 28px; height: 28px; border-radius: 8px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; font-weight: 760; flex: 0 0 auto; }}
+    .row-title {{ font-weight: 720; margin-bottom: 4px; }}
+    .row-text {{ color: var(--muted); font-size: 13px; }}
+    .sections {{ max-width: 1180px; width: 100%; margin: 0 auto; padding: 16px 32px 54px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }}
+    .card {{ background: white; border: 1px solid var(--line); border-radius: 16px; padding: 20px; min-height: 210px; }}
+    .card h2 {{ margin: 0 0 12px; font-size: 18px; }}
+    .card p {{ margin: 0 0 9px; color: var(--muted); font-size: 13px; }}
+    footer {{ padding: 22px 32px; text-align: center; color: var(--muted); font-size: 12px; border-top: 1px solid var(--line); background: white; }}
+    @media (max-width: 820px) {{
+      header {{ padding: 0 18px; }}
+      nav {{ display: none; }}
+      .hero {{ grid-template-columns: 1fr; padding: 34px 18px 20px; }}
+      .sections {{ grid-template-columns: 1fr; padding: 10px 18px 34px; }}
+    }}
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div class="brand"><div class="mark">AI</div><span>{_safe_text(workspace.name)}</span></div>
+      <nav><span>首页</span><span>功能</span><span>流程</span><span>关于</span></nav>
+    </header>
+    <main>
+      <section class="hero">
+        <div>
+          <div class="eyebrow">{_safe_text(platform_label)} · AI 生成原型</div>
+          <h1>{_safe_text(workspace.name)}</h1>
+          <p class="lead">{_safe_text(requirement, "这是根据当前工作区阶段产物生成的真实 HTML 原型，用于确认信息结构和视觉方向。")}</p>
+          <div class="actions">
+            <button class="primary">开始体验</button>
+            <button class="secondary">查看方案</button>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><strong>核心流程</strong><span class="status">可预览</span></div>
+          <div class="panel-body">
+            <div class="row"><div class="num">1</div><div><div class="row-title">理解需求</div><div class="row-text">确认用户、场景和第一版范围。</div></div></div>
+            <div class="row"><div class="num">2</div><div><div class="row-title">选择方案</div><div class="row-text">对产品结构和 UI 方向做确认。</div></div></div>
+            <div class="row"><div class="num">3</div><div><div class="row-title">预览验收</div><div class="row-text">查看真实页面并继续调整。</div></div></div>
+          </div>
+        </div>
+      </section>
+      <section class="sections">
+        <article class="card"><h2>产品方案</h2>{_paragraphs(product)}</article>
+        <article class="card"><h2>UI 方向</h2>{_paragraphs(ui_direction)}</article>
+        <article class="card"><h2>技术约束</h2>{_paragraphs(technical)}</article>
+      </section>
+    </main>
+    <footer>Generated by Team Agent workspace prototype flow</footer>
+  </div>
+</body>
+</html>
+"""
+
+
+async def _create_workspace_artifact(
+    db: AsyncSession,
+    workspace: Workspace,
+    user: User,
+    artifact_type: str,
+    filename: str,
+    content: bytes,
+    mime_type: str,
+) -> Artifact:
+    artifact_dir = settings.artifacts_dir / "workspaces" / workspace.id / artifact_type
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    path = artifact_dir / filename
+    path.write_bytes(content)
+
+    artifact = Artifact(
+        session_type="workspace",
+        session_id=workspace.id,
+        artifact_type=artifact_type,
+        filename=filename,
+        path=str(path),
+        mime_type=mime_type,
+        size_bytes=len(content),
+        checksum=hashlib.sha256(content).hexdigest(),
+        source="generated",
+        created_by=user.id,
+    )
+    db.add(artifact)
+    await db.flush()
+    return artifact
+
+
+def _load_recommendation(stage: WorkspaceStage) -> Dict[str, Any]:
+    if not stage.recommendation_json:
+        return {}
+    try:
+        value = json.loads(stage.recommendation_json)
+        return value if isinstance(value, dict) else {}
+    except json.JSONDecodeError:
+        return {}
+
+
+def _upsert_artifact_reference(
+    recommendation: Dict[str, Any],
+    artifact: Artifact,
+    label: str,
+) -> Dict[str, Any]:
+    artifacts = recommendation.get("artifacts")
+    if not isinstance(artifacts, list):
+        artifacts = []
+    artifacts = [
+        item for item in artifacts
+        if not (isinstance(item, dict) and item.get("type") == artifact.artifact_type and item.get("artifact_id") == artifact.id)
+    ]
+    artifacts.insert(0, {
+        "type": artifact.artifact_type,
+        "status": "ready",
+        "label": label,
+        "artifact_id": artifact.id,
+        "url": f"/api/workspaces/{artifact.session_id}/artifacts/{artifact.id}",
+        "mime_type": artifact.mime_type,
+        "created_at": artifact.created_at.isoformat() if artifact.created_at else None,
+    })
+    recommendation["artifacts"] = artifacts
+    recommendation.setdefault("summary", "已生成真实 HTML 原型，可直接预览页面效果。")
+    recommendation["recommended_action"] = "请查看 HTML 原型预览。如果结构和视觉方向可以接受，就确认通过；否则提交反馈后重新生成。"
+    return recommendation
 
 
 async def _resolve_generation_model(
@@ -801,6 +1063,102 @@ async def delete_workspace(
     await db.delete(workspace)
     await db.commit()
     return {"status": "deleted", "workspace_id": workspace_id}
+
+
+@router.get("/workspaces/{workspace_id}/artifacts", response_model=List[WorkspaceArtifactResponse])
+async def list_workspace_artifacts(
+    workspace_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    await _get_accessible_workspace(db, workspace_id, user)
+    result = await db.execute(
+        select(Artifact)
+        .where(
+            Artifact.session_type == "workspace",
+            Artifact.session_id == workspace_id,
+        )
+        .order_by(Artifact.created_at.desc())
+    )
+    return [WorkspaceArtifactResponse.from_model(artifact) for artifact in result.scalars().all()]
+
+
+@router.get("/workspaces/{workspace_id}/artifacts/{artifact_id}")
+async def get_workspace_artifact(
+    workspace_id: str,
+    artifact_id: str,
+    token: Optional[str] = None,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(optional_bearer),
+    db: AsyncSession = Depends(get_db),
+):
+    auth_token = credentials.credentials if credentials else token
+    user = await get_user_from_query_token(db, auth_token)
+    await _get_accessible_workspace(db, workspace_id, user)
+    artifact = await db.get(Artifact, artifact_id)
+    if (
+        not artifact
+        or artifact.session_type != "workspace"
+        or artifact.session_id != workspace_id
+    ):
+        raise HTTPException(status_code=404, detail="Artifact not found")
+
+    path = Path(artifact.path)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Artifact file not found")
+
+    return FileResponse(
+        path=str(path),
+        media_type=artifact.mime_type,
+        filename=artifact.filename,
+        headers={"Content-Disposition": f'inline; filename="{artifact.filename}"'},
+    )
+
+
+@router.post("/workspaces/{workspace_id}/prototype", response_model=WorkspaceStageResponse)
+async def generate_workspace_prototype(
+    workspace_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    workspace, member = await _get_accessible_workspace(db, workspace_id, user)
+    _require_editor(member)
+
+    stages = await _get_stages(db, workspace_id)
+    prototype_stage = next((stage for stage in stages if stage.stage_key == WorkspaceStageKey.PROTOTYPE), None)
+    if not prototype_stage:
+        raise HTTPException(status_code=404, detail="Prototype stage not found")
+
+    html_content = _build_prototype_html(workspace, stages).encode("utf-8")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    artifact = await _create_workspace_artifact(
+        db=db,
+        workspace=workspace,
+        user=user,
+        artifact_type="prototype_html",
+        filename=f"prototype-{timestamp}.html",
+        content=html_content,
+        mime_type="text/html",
+    )
+
+    recommendation = _upsert_artifact_reference(
+        _load_recommendation(prototype_stage),
+        artifact,
+        "HTML 原型预览",
+    )
+    recommendation["source"] = "prototype_generator_v1"
+    prototype_stage.recommendation_json = json.dumps(recommendation, ensure_ascii=False)
+    prototype_stage.content = "\n".join([
+        "已生成真实 HTML 原型。",
+        f"文件：{artifact.filename}",
+        "你可以在右侧预览区域查看页面长相；后续会继续接入桌面/移动端截图和多模态 UI 审查。",
+    ])
+    prototype_stage.status = WorkspaceStageStatus.AWAITING_CONFIRMATION
+    workspace.current_stage = WorkspaceStageKey.PROTOTYPE
+    workspace.updated_at = datetime.now(timezone.utc)
+
+    await db.commit()
+    await db.refresh(prototype_stage)
+    return WorkspaceStageResponse.from_model(prototype_stage)
 
 
 @router.get("/workspaces/{workspace_id}/stages", response_model=List[WorkspaceStageResponse])

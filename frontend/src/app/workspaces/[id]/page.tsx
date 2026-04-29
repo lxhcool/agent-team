@@ -55,6 +55,10 @@ type Recommendation = {
     type?: string;
     status?: string;
     label?: string;
+    artifact_id?: string;
+    url?: string;
+    mime_type?: string;
+    created_at?: string;
   }[];
   source?: string;
   model?: string;
@@ -124,6 +128,14 @@ function formatDate(value: string | null) {
   }).format(new Date(value));
 }
 
+function withAuthToken(url: string) {
+  if (typeof window === "undefined") return url;
+  const token = localStorage.getItem("agent_team_token");
+  if (!token) return url;
+  const separator = url.includes("?") ? "&" : "?";
+  return `${url}${separator}token=${encodeURIComponent(token)}`;
+}
+
 export default function WorkspaceDetailPage() {
   const params = useParams<{ id: string }>();
   const workspaceId = params.id;
@@ -133,6 +145,7 @@ export default function WorkspaceDetailPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [generatingPrototype, setGeneratingPrototype] = useState(false);
   const [error, setError] = useState("");
 
   const loadWorkspace = async () => {
@@ -250,6 +263,33 @@ export default function WorkspaceDetailPage() {
     }
   };
 
+  const generatePrototype = async () => {
+    if (generatingPrototype) return;
+    setGeneratingPrototype(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/prototype`, { method: "POST" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || "生成 HTML 原型失败");
+      }
+      const stage = await res.json();
+      setWorkspace((current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          current_stage: stage.stage_key,
+          stages: current.stages.map((item) => item.id === stage.id ? stage : item),
+        };
+      });
+      setSelectedKey(stage.stage_key);
+    } catch (err: any) {
+      setError(err.message || "生成 HTML 原型失败");
+    } finally {
+      setGeneratingPrototype(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
@@ -285,6 +325,10 @@ export default function WorkspaceDetailPage() {
   const focus = selectedStage.recommendation?.focus || [];
   const options = selectedStage.recommendation?.options || [];
   const artifacts = selectedStage.recommendation?.artifacts || [];
+  const prototypeArtifact = artifacts.find((artifact) =>
+    artifact.type === "prototype_html" && artifact.status === "ready" && artifact.url
+  );
+  const prototypeUrl = prototypeArtifact?.url ? withAuthToken(prototypeArtifact.url) : "";
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
@@ -394,6 +438,16 @@ export default function WorkspaceDetailPage() {
               </div>
 
               <div className="flex flex-col gap-2 sm:flex-row">
+                {selectedStage.stage_key === "prototype" && (
+                  <button
+                    onClick={generatePrototype}
+                    disabled={generatingPrototype}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-white px-4 py-2.5 text-sm font-medium text-emerald-700 shadow-sm transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-emerald-500/30 dark:bg-slate-900 dark:text-emerald-300 dark:hover:bg-emerald-500/10"
+                  >
+                    {generatingPrototype ? <Loader2 size={16} className="animate-spin" /> : <Eye size={16} />}
+                    生成 HTML 原型
+                  </button>
+                )}
                 <button
                   onClick={generateStage}
                   disabled={generating}
@@ -412,6 +466,30 @@ export default function WorkspaceDetailPage() {
                 </button>
               </div>
             </div>
+
+            {selectedStage.stage_key === "prototype" && prototypeUrl && (
+              <div className="mb-6 overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
+                <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-slate-800">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">HTML 原型预览</div>
+                    <div className="text-xs text-slate-400">真实 HTML/CSS 页面，后续会基于它生成桌面/移动端截图</div>
+                  </div>
+                  <a
+                    href={prototypeUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-indigo-200 hover:text-indigo-600 dark:border-slate-700 dark:text-slate-300"
+                  >
+                    新窗口打开
+                  </a>
+                </div>
+                <iframe
+                  title="Workspace HTML Prototype"
+                  src={prototypeUrl}
+                  className="h-[520px] w-full bg-white"
+                />
+              </div>
+            )}
 
             <div className="grid gap-4 xl:grid-cols-2">
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-800 dark:bg-slate-950/60">
