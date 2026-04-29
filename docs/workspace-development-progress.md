@@ -32,6 +32,10 @@ Each stage must support:
 
 - Electron desktop dev shell for macOS/Windows direction.
 - Desktop startup stabilization with local backend and Next frontend.
+- Desktop startup timeout hardening:
+  - wait for the frontend TCP port before loading `/login`
+  - allow slower first-page compilation in Next dev mode
+  - clean up backend/frontend child process groups when Electron exits
 - macOS frameless titlebar offset for native window controls.
 - Workspace data model:
   - `workspaces`
@@ -86,3 +90,4 @@ Each stage must support:
 - Desktop UI can hide CLI details, but CLI should remain available for advanced users.
 - Prototype confirmation must favor real rendered HTML/CSS over decorative generated images.
 - Concept images are useful for style exploration, but approval should be based on rendered previews and screenshots.
+- In development mode, frontend page changes hot reload through Next. Electron main/preload changes and backend process changes still require restarting the desktop app.

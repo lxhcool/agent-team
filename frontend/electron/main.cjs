@@ -191,11 +191,57 @@ function waitForHttp(url, timeoutMs = 60000, label = url) {
   });
 }
 
+function waitForTcpPort(host, port, timeoutMs = 60000, label = `${host}:${port}`) {
+  const started = Date.now();
+  let lastLogAt = 0;
+  let lastState = "not checked yet";
+
+  return new Promise((resolve, reject) => {
+    const poll = () => {
+      let settled = false;
+      const socket = net.createConnection({ host, port });
+      socket.once("connect", () => {
+        settled = true;
+        socket.end();
+        resolve();
+      });
+      socket.once("error", (error) => {
+        if (settled) return;
+        settled = true;
+        lastState = error.message;
+        retry();
+      });
+      socket.setTimeout(3000, () => {
+        if (settled) return;
+        settled = true;
+        lastState = "connection timed out";
+        socket.destroy();
+        retry();
+      });
+    };
+
+    const retry = () => {
+      if (Date.now() - started > timeoutMs) {
+        reject(new Error(`Timed out waiting for ${label}: ${lastState}`));
+        return;
+      }
+      if (Date.now() - lastLogAt > 3000) {
+        lastLogAt = Date.now();
+        log(`still waiting for ${label}: ${lastState}`);
+      }
+      setTimeout(poll, 500);
+    };
+
+    poll();
+  });
+}
+
 function spawnManaged(command, args, options) {
   log(`spawn: ${command} ${args.join(" ")}`);
   const child = spawn(command, args, {
     stdio: "inherit",
     windowsHide: true,
+    detached: process.platform !== "win32",
     ...options,
   });
 
@@ -216,6 +262,24 @@ function waitForManagedHttp(url, child, label, timeoutMs = 60000) {
       });
     }),
   ]);
+}
+
+function waitForManagedTcp(host, port, child, label, timeoutMs = 60000) {
+  return Promise.race([
+    waitForTcpPort(host, port, timeoutMs, label),
+    new Promise((_, reject) => {
+      child.once("exit", (code, signal) => {
+        reject(new Error(`${label} process exited before it was ready (code=${code}, signal=${signal || "none"})`));
+      });
+      child.once("error", (error) => {
+        reject(new Error(`${label} failed to start: ${error.message}`));
+      });
+    }),
+  ]);
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function getPythonCommand() {
@@ -281,8 +345,9 @@ async function startLocalServices() {
 
   const frontendUrl = `http://127.0.0.1:${resolvedFrontendPort}`;
   const initialPageUrl = `${frontendUrl}/login`;
-  log(`waiting for frontend: ${initialPageUrl}`);
-  await waitForManagedHttp(initialPageUrl, frontendProcess, "frontend", 90000);
+  log(`waiting for frontend server: 127.0.0.1:${resolvedFrontendPort}`);
+  await waitForManagedTcp("127.0.0.1", resolvedFrontendPort, frontendProcess, "frontend", 120000);
+  await delay(500);
   log("frontend is ready");
 
   return {
@@ -294,7 +359,18 @@ async function startLocalServices() {
 function stopLocalServices() {
   for (const child of childProcesses) {
     if (!child.killed) {
-      child.kill();
+      try {
+        if (process.platform === "win32") {
+          spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
+            stdio: "ignore",
+            windowsHide: true,
+          });
+        } else {
+          process.kill(-child.pid, "SIGTERM");
+        }
+      } catch {
+        child.kill();
+      }
     }
   }
   childProcesses.clear();
