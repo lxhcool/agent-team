@@ -40,7 +40,7 @@
   "build": {
     "appId": "com.teamagent.desktop",
     "productName": "Team Agent",
-    "icon": "public/logo.png",
+    "icon": "electron/assets/icon.png",
     "directories": {
       "output": "dist-desktop"
     },

@@ -11,7 +11,7 @@ const repoRoot = path.resolve(frontendDir, "..");
 const backendDir = isPackaged
   ? path.join(process.resourcesPath, "backend")
   : path.join(repoRoot, "backend");
-const appIconPath = path.join(frontendDir, "public", "logo.png");
+const appIconPath = path.join(frontendDir, "electron", "assets", "icon.png");
 
 const childProcesses = new Set();
 let mainWindow = null;
