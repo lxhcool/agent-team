@@ -12,6 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import get_current_user
 from app.core.database import get_db
 from app.models.models import (
+    ModelSettings,
+    ProviderConfig,
     User,
     Workspace,
     WorkspaceMember,
@@ -21,6 +23,7 @@ from app.models.models import (
     WorkspaceStageStatus,
     WorkspaceStatus,
 )
+from app.llm.router import LLMError, LLMMessage, llm_router
 
 router = APIRouter()
 
@@ -288,6 +291,201 @@ def _stage_context(workspace: Workspace, stages: List[WorkspaceStage]) -> Dict[s
         if stage.content:
             context[stage.stage_key.value] = stage.content
     return context
+
+
+def _json_dumps(data: Any) -> str:
+    return json.dumps(data, ensure_ascii=False, indent=2)
+
+
+def _parse_json_object(text: str) -> Dict[str, Any]:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        lines = cleaned.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        cleaned = "\n".join(lines).strip()
+
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start >= 0 and end >= start:
+        cleaned = cleaned[start:end + 1]
+    return json.loads(cleaned)
+
+
+def _sanitize_llm_artifact(payload: Dict[str, Any]) -> tuple[Dict[str, Any], str]:
+    recommendation = payload.get("recommendation") if isinstance(payload.get("recommendation"), dict) else {}
+    content = payload.get("content") if isinstance(payload.get("content"), str) else ""
+
+    sanitized = {
+        "summary": str(recommendation.get("summary") or "AI 团队已生成本阶段推荐方案。"),
+        "recommended_action": str(recommendation.get("recommended_action") or "请确认本阶段方案，或提交反馈让 AI 重新调整。"),
+        "focus": recommendation.get("focus") if isinstance(recommendation.get("focus"), list) else [],
+        "options": recommendation.get("options") if isinstance(recommendation.get("options"), list) else [],
+        "artifacts": recommendation.get("artifacts") if isinstance(recommendation.get("artifacts"), list) else [],
+    }
+    if not content:
+        content = "AI 已生成推荐，但没有返回详细产物。请提交反馈后重新生成。"
+    return sanitized, content
+
+
+async def _resolve_generation_model(
+    db: AsyncSession,
+    user: User,
+) -> tuple[Optional[str], Optional[str], Optional[List[str]]]:
+    settings_result = await db.execute(
+        select(ModelSettings).where(ModelSettings.user_id == user.id)
+    )
+    settings = settings_result.scalars().first()
+
+    model = None
+    provider = None
+    fallback_chain = None
+    if settings:
+        model = settings.planning_model or settings.default_model
+        if settings.fallback_chain_json:
+            try:
+                fallback_chain = json.loads(settings.fallback_chain_json)
+            except json.JSONDecodeError:
+                fallback_chain = None
+
+    provider_result = await db.execute(
+        select(ProviderConfig).where(
+            ProviderConfig.user_id == user.id,
+            ProviderConfig.enabled == True,
+        )
+    )
+    providers = list(provider_result.scalars().all())
+    keyed_providers = [provider for provider in providers if provider.api_key_encrypted]
+
+    if model:
+        for item in keyed_providers:
+            if item.default_model == model:
+                provider = item.provider_name
+                break
+
+    if not model or not provider:
+        for item in keyed_providers:
+            if item.default_model:
+                model = item.default_model
+                provider = item.provider_name
+                break
+
+    if not model or not provider:
+        return None, None, fallback_chain
+    return model, provider, fallback_chain
+
+
+def _build_stage_generation_prompt(
+    workspace: Workspace,
+    stages: List[WorkspaceStage],
+    stage: WorkspaceStage,
+    instruction: Optional[str],
+) -> str:
+    stage_context = []
+    for item in stages:
+        if item.content:
+            stage_context.append({
+                "stage": item.stage_key.value,
+                "title": item.title,
+                "status": item.status.value,
+                "content": item.content[:2500],
+                "user_feedback": item.user_feedback,
+            })
+
+    payload = {
+        "workspace": {
+            "name": workspace.name,
+            "description": workspace.description,
+            "target_platform": workspace.target_platform,
+        },
+        "current_stage": {
+            "stage_key": stage.stage_key.value,
+            "title": stage.title,
+            "description": stage.description,
+            "status": stage.status.value,
+            "current_content": stage.content,
+            "user_feedback": stage.user_feedback,
+            "extra_instruction": instruction,
+        },
+        "known_stage_outputs": stage_context,
+    }
+    return _json_dumps(payload)
+
+
+async def _generate_stage_artifact_with_llm(
+    db: AsyncSession,
+    user: User,
+    workspace: Workspace,
+    stages: List[WorkspaceStage],
+    stage: WorkspaceStage,
+    instruction: Optional[str],
+) -> Optional[tuple[Dict[str, Any], str]]:
+    model, provider, fallback_chain = await _resolve_generation_model(db, user)
+    if not model or not provider:
+        return None
+
+    await llm_router.load_providers(db, user_id=user.id)
+
+    system_prompt = """
+你是一个 AI 产品开发团队的项目负责人，负责把普通用户的想法推进为可确认的阶段产物。
+你的输出面向完全不懂代码的用户，所以必须具体、可选择、可确认。
+
+请只返回 JSON，不要 Markdown，不要代码块。JSON 格式：
+{
+  "recommendation": {
+    "summary": "一句话说明本阶段建议",
+    "recommended_action": "用户下一步应该怎么确认",
+    "focus": ["确认点1", "确认点2"],
+    "options": [
+      {"title": "方案名", "description": "给小白用户看的解释", "recommended": true}
+    ],
+    "artifacts": [
+      {"type": "concept_image|desktop_screenshot|mobile_screenshot|vision_review|document", "status": "pending", "label": "产物名称"}
+    ]
+  },
+  "content": "本阶段给用户看的详细产物，使用中文，可包含编号列表"
+}
+
+阶段规则：
+- 需求确认：帮用户收敛目标用户、核心问题、MVP 范围、暂缓事项。
+- 产品方案：给页面列表、用户主流程、功能优先级。
+- UI 方向：给 2-3 个小白能理解的视觉方向，并说明推荐理由；要保留概念图/参考图分析产物。
+- 原型确认：强调真实页面截图和多模态 UI 审查，不要只承诺漂亮效果图。
+- 技术方案：给技术栈、数据隔离、执行边界、部署测试建议。
+- 开发执行：给 checkpoint、代码修改、检查、预览和回滚流程。
+- 预览验收：给用户验收清单。
+- 部署测试：给测试服务器发布、日志和回滚计划。
+""".strip()
+
+    try:
+        result = await llm_router.call(
+            messages=[
+                LLMMessage(role="system", content=system_prompt),
+                LLMMessage(role="user", content=_build_stage_generation_prompt(
+                    workspace=workspace,
+                    stages=stages,
+                    stage=stage,
+                    instruction=instruction,
+                )),
+            ],
+            model=model,
+            provider_name=provider,
+            fallback_chain=fallback_chain,
+            max_tokens=2200,
+            temperature=0.35,
+            session_id=workspace.id,
+            session_type="workspace",
+            agent_name="workspace_stage_generator",
+        )
+        recommendation, content = _sanitize_llm_artifact(_parse_json_object(result.content))
+        recommendation["source"] = "llm"
+        recommendation["model"] = result.model
+        recommendation["provider"] = result.provider
+        return recommendation, content
+    except (LLMError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+        return None
 
 
 def _generate_stage_artifact(
@@ -668,12 +866,23 @@ async def generate_workspace_stage(
     if not stage:
         raise HTTPException(status_code=404, detail="Workspace stage not found")
 
-    recommendation, content = _generate_stage_artifact(
+    generated = await _generate_stage_artifact_with_llm(
+        db=db,
+        user=user,
         workspace=workspace,
         stages=stages,
         stage=stage,
         instruction=req.instruction,
     )
+    if generated:
+        recommendation, content = generated
+    else:
+        recommendation, content = _generate_stage_artifact(
+            workspace=workspace,
+            stages=stages,
+            stage=stage,
+            instruction=req.instruction,
+        )
     stage.recommendation_json = json.dumps(recommendation, ensure_ascii=False)
     stage.content = content
     stage.status = WorkspaceStageStatus.AWAITING_CONFIRMATION

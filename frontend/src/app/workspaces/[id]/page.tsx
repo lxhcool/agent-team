@@ -57,6 +57,8 @@ type Recommendation = {
     label?: string;
   }[];
   source?: string;
+  model?: string;
+  provider?: string;
   feedback_used?: string;
 };
 
@@ -420,6 +422,12 @@ export default function WorkspaceDetailPage() {
                 <p className="text-sm leading-6 text-slate-600 dark:text-slate-300">
                   {selectedStage.recommendation?.summary || "等待 AI 团队生成推荐方案。"}
                 </p>
+                {selectedStage.recommendation?.source && (
+                  <div className="mt-3 inline-flex max-w-full items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                    来源：{selectedStage.recommendation.source === "llm" ? "模型生成" : "模板兜底"}
+                    {selectedStage.recommendation.model ? ` · ${selectedStage.recommendation.model}` : ""}
+                  </div>
+                )}
                 <div className="mt-4 rounded-xl bg-white p-3 text-sm text-slate-600 dark:bg-slate-900 dark:text-slate-300">
                   {selectedStage.recommendation?.recommended_action || "建议先确认本阶段方向。"}
                 </div>
