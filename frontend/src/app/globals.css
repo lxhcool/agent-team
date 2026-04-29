@@ -196,6 +196,10 @@ body {
   -webkit-app-region: no-drag;
 }
 
+.team-agent-desktop.platform-darwin .desktop-titlebar-content {
+  padding-left: 144px;
+}
+
 /* === Card === */
 .card {
   background: var(--card);

@@ -72,7 +72,7 @@ export function TopNav() {
 
   return (
     <header className="desktop-drag-region fixed top-0 left-0 right-0 z-50 border-b border-slate-200/60 dark:border-slate-700/40 bg-white/70 dark:bg-slate-900/70 backdrop-blur-xl">
-      <div className="mx-auto flex h-14 max-w-[1400px] items-center px-4 sm:px-6">
+      <div className="desktop-titlebar-content mx-auto flex h-14 max-w-[1400px] items-center px-4 sm:px-6">
         {/* Logo */}
         <Link href="/" className="flex items-center gap-2.5 shrink-0">
           <img src="/logo.png" alt="" className="size-7 rounded-lg object-cover" />
