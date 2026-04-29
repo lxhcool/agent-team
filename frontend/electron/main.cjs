@@ -11,6 +11,7 @@ const repoRoot = path.resolve(frontendDir, "..");
 const backendDir = isPackaged
   ? path.join(process.resourcesPath, "backend")
   : path.join(repoRoot, "backend");
+const appIconPath = path.join(frontendDir, "public", "logo.png");
 
 const childProcesses = new Set();
 let mainWindow = null;
@@ -24,6 +25,7 @@ function createWindow() {
     title: "Team Agent",
     backgroundColor: "#0f172a",
     show: false,
+    icon: appIconPath,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -199,7 +201,12 @@ async function bootstrap() {
   }
 }
 
-app.whenReady().then(bootstrap);
+app.whenReady().then(() => {
+  if (process.platform === "darwin" && app.dock && fs.existsSync(appIconPath)) {
+    app.dock.setIcon(appIconPath);
+  }
+  return bootstrap();
+});
 
 app.on("window-all-closed", () => {
   stopLocalServices();
