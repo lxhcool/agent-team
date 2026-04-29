@@ -146,6 +146,7 @@ export default function WorkspaceDetailPage() {
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [generatingPrototype, setGeneratingPrototype] = useState(false);
+  const [generatingDesigns, setGeneratingDesigns] = useState(false);
   const [error, setError] = useState("");
 
   const loadWorkspace = async () => {
@@ -290,6 +291,33 @@ export default function WorkspaceDetailPage() {
     }
   };
 
+  const generateDesigns = async () => {
+    if (generatingDesigns) return;
+    setGeneratingDesigns(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/designs`, { method: "POST" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || "生成设计稿失败");
+      }
+      const stage = await res.json();
+      setWorkspace((current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          current_stage: stage.stage_key,
+          stages: current.stages.map((item) => item.id === stage.id ? stage : item),
+        };
+      });
+      setSelectedKey(stage.stage_key);
+    } catch (err: any) {
+      setError(err.message || "生成设计稿失败");
+    } finally {
+      setGeneratingDesigns(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
@@ -328,7 +356,15 @@ export default function WorkspaceDetailPage() {
   const prototypeArtifact = artifacts.find((artifact) =>
     artifact.type === "prototype_html" && artifact.status === "ready" && artifact.url
   );
+  const desktopDesign = artifacts.find((artifact) =>
+    artifact.type === "desktop_design" && artifact.status === "ready" && artifact.url
+  );
+  const mobileDesign = artifacts.find((artifact) =>
+    artifact.type === "mobile_design" && artifact.status === "ready" && artifact.url
+  );
   const prototypeUrl = prototypeArtifact?.url ? withAuthToken(prototypeArtifact.url) : "";
+  const desktopDesignUrl = desktopDesign?.url ? withAuthToken(desktopDesign.url) : "";
+  const mobileDesignUrl = mobileDesign?.url ? withAuthToken(mobileDesign.url) : "";
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
@@ -439,14 +475,24 @@ export default function WorkspaceDetailPage() {
 
               <div className="flex flex-col gap-2 sm:flex-row">
                 {selectedStage.stage_key === "prototype" && (
-                  <button
-                    onClick={generatePrototype}
-                    disabled={generatingPrototype}
-                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-white px-4 py-2.5 text-sm font-medium text-emerald-700 shadow-sm transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-emerald-500/30 dark:bg-slate-900 dark:text-emerald-300 dark:hover:bg-emerald-500/10"
-                  >
-                    {generatingPrototype ? <Loader2 size={16} className="animate-spin" /> : <Eye size={16} />}
-                    生成 HTML 原型
-                  </button>
+                  <>
+                    <button
+                      onClick={generateDesigns}
+                      disabled={generatingDesigns}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-white px-4 py-2.5 text-sm font-medium text-emerald-700 shadow-sm transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-emerald-500/30 dark:bg-slate-900 dark:text-emerald-300 dark:hover:bg-emerald-500/10"
+                    >
+                      {generatingDesigns ? <Loader2 size={16} className="animate-spin" /> : <Palette size={16} />}
+                      生成设计稿
+                    </button>
+                    <button
+                      onClick={generatePrototype}
+                      disabled={generatingPrototype}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                    >
+                      {generatingPrototype ? <Loader2 size={16} className="animate-spin" /> : <Eye size={16} />}
+                      生成 HTML 原型
+                    </button>
+                  </>
                 )}
                 <button
                   onClick={generateStage}
@@ -467,12 +513,35 @@ export default function WorkspaceDetailPage() {
               </div>
             </div>
 
+            {selectedStage.stage_key === "prototype" && (desktopDesignUrl || mobileDesignUrl) && (
+              <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950">
+                <div className="mb-4">
+                  <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">设计稿</div>
+                  <div className="text-xs text-slate-400">给用户确认视觉方向的桌面端和移动端页面图</div>
+                </div>
+                <div className="grid gap-4 xl:grid-cols-[1fr_340px]">
+                  {desktopDesignUrl && (
+                    <a href={desktopDesignUrl} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900">
+                      <div className="border-b border-slate-200 px-3 py-2 text-xs font-medium text-slate-500 dark:border-slate-800 dark:text-slate-400">桌面端设计稿</div>
+                      <img src={desktopDesignUrl} alt="桌面端设计稿" className="w-full bg-white" />
+                    </a>
+                  )}
+                  {mobileDesignUrl && (
+                    <a href={mobileDesignUrl} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900">
+                      <div className="border-b border-slate-200 px-3 py-2 text-xs font-medium text-slate-500 dark:border-slate-800 dark:text-slate-400">移动端设计稿</div>
+                      <img src={mobileDesignUrl} alt="移动端设计稿" className="mx-auto max-h-[520px] bg-white" />
+                    </a>
+                  )}
+                </div>
+              </div>
+            )}
+
             {selectedStage.stage_key === "prototype" && prototypeUrl && (
               <div className="mb-6 overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
                 <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-slate-800">
                   <div>
                     <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">HTML 原型预览</div>
-                    <div className="text-xs text-slate-400">真实 HTML/CSS 页面，后续会基于它生成桌面/移动端截图</div>
+                    <div className="text-xs text-slate-400">真实 HTML/CSS 页面，用作后续代码落地基础</div>
                   </div>
                   <a
                     href={prototypeUrl}

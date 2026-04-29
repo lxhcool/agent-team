@@ -55,17 +55,19 @@ Each stage must support:
   - generate real HTML prototype: done
   - save prototype as workspace artifact: done
   - show preview in the prototype stage: done
-  - generate desktop/mobile screenshots: next
+  - generate desktop/mobile design drafts: done
+  - generate design artifacts without extra browser dependency: done
+  - generate browser-rendered screenshots from HTML prototype: later
   - run multimodal UI review: next
 
 ## Next
 
-- Add Playwright screenshot generation:
-  - desktop screenshot
-  - mobile screenshot
-  - artifact records for screenshots
+- Improve design draft generation:
+  - generate richer page-specific design drafts with LLM-produced layout JSON
+  - support multiple pages per workspace
+  - allow user to choose a design direction and regenerate
 - Add multimodal UI review:
-  - send generated screenshots to vision-capable model
+  - send generated design drafts or rendered previews to vision-capable model
   - write review summary back to prototype stage
 - Add workspace project repository:
   - local project path per workspace

@@ -524,6 +524,112 @@ def _build_prototype_html(workspace: Workspace, stages: List[WorkspaceStage]) ->
 """
 
 
+def _wrap_text(value: str, max_chars: int, max_lines: int) -> List[str]:
+    normalized = " ".join((value or "").split())
+    if not normalized:
+        return ["等待补充"]
+
+    lines = []
+    current = ""
+    for char in normalized:
+        current += char
+        if len(current) >= max_chars:
+            lines.append(current)
+            current = ""
+            if len(lines) >= max_lines:
+                break
+    if current and len(lines) < max_lines:
+        lines.append(current)
+    if len(lines) == max_lines and len(normalized) > sum(len(line) for line in lines):
+        lines[-1] = lines[-1].rstrip("，。,. ") + "..."
+    return lines
+
+
+def _svg_text(lines: List[str], x: int, y: int, size: int, color: str, line_height: int) -> str:
+    tspans = []
+    for index, line in enumerate(lines):
+        dy = 0 if index == 0 else line_height
+        tspans.append(
+            f'<tspan x="{x}" dy="{dy}">{html_lib.escape(line)}</tspan>'
+        )
+    return f'<text x="{x}" y="{y}" font-size="{size}" fill="{color}" font-family="Inter, Arial, sans-serif">{"".join(tspans)}</text>'
+
+
+def _build_design_svg(workspace: Workspace, stages: List[WorkspaceStage], viewport: str) -> str:
+    requirement = _stage_content(stages, WorkspaceStageKey.REQUIREMENTS) or workspace.description or "请补充项目需求"
+    product = _stage_content(stages, WorkspaceStageKey.PRODUCT) or "核心页面、用户主流程和功能优先级将在这里呈现。"
+    ui_direction = _stage_content(stages, WorkspaceStageKey.UI_DIRECTION) or "建议先确认专业清晰型、轻快亲和型或高级品牌型。"
+    is_mobile = viewport == "mobile"
+
+    if is_mobile:
+        width, height = 390, 844
+        title_size = 32
+        margin = 22
+        card_width = 346
+        hero_lines = _wrap_text(requirement, 19, 4)
+        product_lines = _wrap_text(product, 22, 5)
+        ui_lines = _wrap_text(ui_direction, 22, 4)
+        return f'''<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
+  <rect width="{width}" height="{height}" rx="34" fill="#F7F8FC"/>
+  <rect x="18" y="18" width="354" height="808" rx="28" fill="#FFFFFF" stroke="#E5E7EB"/>
+  <rect x="{margin}" y="34" width="{card_width}" height="54" rx="18" fill="#EEF2FF"/>
+  <circle cx="55" cy="61" r="16" fill="#4F46E5"/>
+  <text x="82" y="67" font-size="16" font-weight="700" fill="#172033" font-family="Inter, Arial, sans-serif">{_safe_text(workspace.name)}</text>
+  <text x="{margin}" y="130" font-size="12" font-weight="700" fill="#4F46E5" font-family="Inter, Arial, sans-serif">移动端设计稿</text>
+  <text x="{margin}" y="178" font-size="{title_size}" font-weight="800" fill="#172033" font-family="Inter, Arial, sans-serif">{_safe_text(workspace.name)}</text>
+  {_svg_text(hero_lines, margin, 218, 14, "#667085", 22)}
+  <rect x="{margin}" y="328" width="{card_width}" height="132" rx="22" fill="#4F46E5"/>
+  <text x="46" y="368" font-size="18" font-weight="760" fill="#FFFFFF" font-family="Inter, Arial, sans-serif">开始体验</text>
+  <text x="46" y="397" font-size="13" fill="#E0E7FF" font-family="Inter, Arial, sans-serif">清晰的主行动入口</text>
+  <rect x="236" y="356" width="84" height="84" rx="20" fill="#FFFFFF" opacity=".16"/>
+  <rect x="{margin}" y="488" width="{card_width}" height="144" rx="22" fill="#F8FAFC" stroke="#E5E7EB"/>
+  <text x="46" y="526" font-size="16" font-weight="760" fill="#172033" font-family="Inter, Arial, sans-serif">产品结构</text>
+  {_svg_text(product_lines, 46, 558, 12, "#667085", 18)}
+  <rect x="{margin}" y="654" width="{card_width}" height="128" rx="22" fill="#F8FAFC" stroke="#E5E7EB"/>
+  <text x="46" y="692" font-size="16" font-weight="760" fill="#172033" font-family="Inter, Arial, sans-serif">UI 方向</text>
+  {_svg_text(ui_lines, 46, 724, 12, "#667085", 18)}
+</svg>'''
+
+    width, height = 1440, 1040
+    requirement_lines = _wrap_text(requirement, 38, 4)
+    product_lines = _wrap_text(product, 34, 6)
+    ui_lines = _wrap_text(ui_direction, 34, 6)
+    return f'''<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
+  <rect width="{width}" height="{height}" fill="#F6F8FB"/>
+  <rect x="84" y="54" width="1272" height="82" rx="24" fill="#FFFFFF" stroke="#E5E7EB"/>
+  <circle cx="132" cy="95" r="22" fill="#4F46E5"/>
+  <text x="170" y="104" font-size="22" font-weight="760" fill="#172033" font-family="Inter, Arial, sans-serif">{_safe_text(workspace.name)}</text>
+  <text x="1030" y="101" font-size="16" fill="#667085" font-family="Inter, Arial, sans-serif">首页　功能　流程　关于</text>
+  <text x="96" y="218" font-size="15" font-weight="760" fill="#4F46E5" font-family="Inter, Arial, sans-serif">桌面端设计稿 · AI 生成</text>
+  <text x="96" y="302" font-size="64" font-weight="820" fill="#172033" font-family="Inter, Arial, sans-serif">{_safe_text(workspace.name)}</text>
+  {_svg_text(requirement_lines, 100, 354, 21, "#667085", 34)}
+  <rect x="96" y="520" width="190" height="54" rx="14" fill="#4F46E5"/>
+  <text x="134" y="554" font-size="17" font-weight="760" fill="#FFFFFF" font-family="Inter, Arial, sans-serif">开始体验</text>
+  <rect x="304" y="520" width="168" height="54" rx="14" fill="#FFFFFF" stroke="#E5E7EB"/>
+  <text x="346" y="554" font-size="17" font-weight="760" fill="#172033" font-family="Inter, Arial, sans-serif">查看方案</text>
+  <rect x="792" y="196" width="468" height="418" rx="28" fill="#FFFFFF" stroke="#E5E7EB"/>
+  <rect x="830" y="238" width="392" height="74" rx="18" fill="#EEF2FF"/>
+  <text x="864" y="284" font-size="20" font-weight="760" fill="#4F46E5" font-family="Inter, Arial, sans-serif">核心流程</text>
+  <rect x="830" y="340" width="392" height="74" rx="18" fill="#F8FAFC" stroke="#E5E7EB"/>
+  <text x="864" y="386" font-size="18" font-weight="720" fill="#172033" font-family="Inter, Arial, sans-serif">1. 理解需求</text>
+  <rect x="830" y="436" width="392" height="74" rx="18" fill="#F8FAFC" stroke="#E5E7EB"/>
+  <text x="864" y="482" font-size="18" font-weight="720" fill="#172033" font-family="Inter, Arial, sans-serif">2. 选择方案</text>
+  <rect x="830" y="532" width="392" height="74" rx="18" fill="#F8FAFC" stroke="#E5E7EB"/>
+  <text x="864" y="578" font-size="18" font-weight="720" fill="#172033" font-family="Inter, Arial, sans-serif">3. 预览验收</text>
+  <rect x="96" y="700" width="390" height="228" rx="24" fill="#FFFFFF" stroke="#E5E7EB"/>
+  <text x="128" y="750" font-size="22" font-weight="760" fill="#172033" font-family="Inter, Arial, sans-serif">产品方案</text>
+  {_svg_text(product_lines, 128, 792, 15, "#667085", 24)}
+  <rect x="526" y="700" width="390" height="228" rx="24" fill="#FFFFFF" stroke="#E5E7EB"/>
+  <text x="558" y="750" font-size="22" font-weight="760" fill="#172033" font-family="Inter, Arial, sans-serif">UI 方向</text>
+  {_svg_text(ui_lines, 558, 792, 15, "#667085", 24)}
+  <rect x="956" y="700" width="300" height="228" rx="24" fill="#FFFFFF" stroke="#E5E7EB"/>
+  <text x="988" y="750" font-size="22" font-weight="760" fill="#172033" font-family="Inter, Arial, sans-serif">确认点</text>
+  <text x="988" y="798" font-size="15" fill="#667085" font-family="Inter, Arial, sans-serif">真实页面可落地</text>
+  <text x="988" y="832" font-size="15" fill="#667085" font-family="Inter, Arial, sans-serif">支持继续调整</text>
+  <text x="988" y="866" font-size="15" fill="#667085" font-family="Inter, Arial, sans-serif">进入代码开发前确认</text>
+</svg>'''
+
+
 async def _create_workspace_artifact(
     db: AsyncSession,
     workspace: Workspace,
@@ -1151,6 +1257,66 @@ async def generate_workspace_prototype(
         "已生成真实 HTML 原型。",
         f"文件：{artifact.filename}",
         "你可以在右侧预览区域查看页面长相；后续会继续接入桌面/移动端截图和多模态 UI 审查。",
+    ])
+    prototype_stage.status = WorkspaceStageStatus.AWAITING_CONFIRMATION
+    workspace.current_stage = WorkspaceStageKey.PROTOTYPE
+    workspace.updated_at = datetime.now(timezone.utc)
+
+    await db.commit()
+    await db.refresh(prototype_stage)
+    return WorkspaceStageResponse.from_model(prototype_stage)
+
+
+@router.post("/workspaces/{workspace_id}/designs", response_model=WorkspaceStageResponse)
+async def generate_workspace_designs(
+    workspace_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    workspace, member = await _get_accessible_workspace(db, workspace_id, user)
+    _require_editor(member)
+
+    stages = await _get_stages(db, workspace_id)
+    prototype_stage = next((stage for stage in stages if stage.stage_key == WorkspaceStageKey.PROTOTYPE), None)
+    if not prototype_stage:
+        raise HTTPException(status_code=404, detail="Prototype stage not found")
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    desktop_svg = _build_design_svg(workspace, stages, "desktop").encode("utf-8")
+    mobile_svg = _build_design_svg(workspace, stages, "mobile").encode("utf-8")
+
+    desktop_artifact = await _create_workspace_artifact(
+        db=db,
+        workspace=workspace,
+        user=user,
+        artifact_type="desktop_design",
+        filename=f"desktop-design-{timestamp}.svg",
+        content=desktop_svg,
+        mime_type="image/svg+xml",
+    )
+    mobile_artifact = await _create_workspace_artifact(
+        db=db,
+        workspace=workspace,
+        user=user,
+        artifact_type="mobile_design",
+        filename=f"mobile-design-{timestamp}.svg",
+        content=mobile_svg,
+        mime_type="image/svg+xml",
+    )
+
+    recommendation = _load_recommendation(prototype_stage)
+    recommendation = _upsert_artifact_reference(recommendation, desktop_artifact, "桌面端设计稿")
+    recommendation = _upsert_artifact_reference(recommendation, mobile_artifact, "移动端设计稿")
+    recommendation["source"] = "design_generator_v1"
+    recommendation["summary"] = "已生成桌面端和移动端设计稿，可作为用户确认 UI 的视觉依据。"
+    recommendation["recommended_action"] = "请查看设计稿。如果视觉方向、信息结构和移动端布局可以接受，就确认通过；否则提交反馈后重新生成。"
+
+    prototype_stage.recommendation_json = json.dumps(recommendation, ensure_ascii=False)
+    prototype_stage.content = "\n".join([
+        "已生成设计稿。",
+        f"桌面端：{desktop_artifact.filename}",
+        f"移动端：{mobile_artifact.filename}",
+        "设计稿用于给用户确认视觉方向；HTML 原型仍作为后续代码落地基础。",
     ])
     prototype_stage.status = WorkspaceStageStatus.AWAITING_CONFIRMATION
     workspace.current_stage = WorkspaceStageKey.PROTOTYPE
