@@ -37,7 +37,7 @@ class LLMCallResult:
     completion_tokens: int = 0
     cost: float = 0.0
     duration_ms: int = 0
-    finish_reason: str | None = None
+    finish_reason: Optional[str] = None
     was_truncated: bool = False
     was_continued: bool = False
 
@@ -48,7 +48,7 @@ class ProviderInfo:
     base_url: str
     api_key: str
     api_type: str = "openai_compatible"
-    default_model: str | None = None
+    default_model: Optional[str] = None
 
 
 class ProviderAdapter:
@@ -285,21 +285,21 @@ class LLMRouter:
                 default_model=p.default_model,
             )
 
-    def get_provider(self, provider_name: str) -> ProviderInfo | None:
+    def get_provider(self, provider_name: str) -> Optional[ProviderInfo]:
         return self._providers.get(provider_name)
 
     async def call(
         self,
         messages: list[LLMMessage],
         model: str,
-        provider_name: str | None = None,
-        fallback_chain: list[str] | None = None,
+        provider_name: Optional[str] = None,
+        fallback_chain: Optional[list[str]] = None,
         max_tokens: int = 4096,
         temperature: float = 0.7,
-        session_id: str | None = None,
+        session_id: Optional[str] = None,
         session_type: str = "planning",
-        agent_name: str | None = None,
-        budget_usd: float | None = None,
+        agent_name: Optional[str] = None,
+        budget_usd: Optional[float] = None,
     ) -> LLMCallResult:
         """
         Call an LLM with automatic provider routing, retry, and fallback.

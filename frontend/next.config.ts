@@ -6,7 +6,7 @@ const nextConfig = {
     return [
       {
         source: "/api/:path*",
-        destination: `http://localhost:${backendPort}/api/:path*`,
+        destination: `http://127.0.0.1:${backendPort}/api/:path*`,
       },
       // Alias: /execution/:id -> /executions/:id (per requirements design doc)
       {

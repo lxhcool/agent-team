@@ -183,6 +183,19 @@ body {
   line-height: 1.5;
 }
 
+.desktop-drag-region {
+  -webkit-app-region: drag;
+}
+
+.desktop-drag-region a,
+.desktop-drag-region button,
+.desktop-drag-region input,
+.desktop-drag-region select,
+.desktop-drag-region textarea,
+.desktop-drag-region [role="button"] {
+  -webkit-app-region: no-drag;
+}
+
 /* === Card === */
 .card {
   background: var(--card);
