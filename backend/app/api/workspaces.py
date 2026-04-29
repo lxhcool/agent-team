@@ -101,6 +101,10 @@ class StageFeedbackRequest(BaseModel):
     feedback: str = Field(..., min_length=1)
 
 
+class GenerateStageRequest(BaseModel):
+    instruction: Optional[str] = None
+
+
 class WorkspaceStageResponse(BaseModel):
     id: str
     workspace_id: str
@@ -274,6 +278,233 @@ def _next_stage_key(stage_key: WorkspaceStageKey) -> Optional[WorkspaceStageKey]
     return keys[index + 1]
 
 
+def _stage_context(workspace: Workspace, stages: List[WorkspaceStage]) -> Dict[str, str]:
+    context = {
+        "workspace_name": workspace.name,
+        "target_platform": workspace.target_platform,
+        "initial_requirement": workspace.description or "",
+    }
+    for stage in stages:
+        if stage.content:
+            context[stage.stage_key.value] = stage.content
+    return context
+
+
+def _generate_stage_artifact(
+    workspace: Workspace,
+    stages: List[WorkspaceStage],
+    stage: WorkspaceStage,
+    instruction: Optional[str],
+) -> tuple[Dict[str, Any], str]:
+    context = _stage_context(workspace, stages)
+    requirement = context.get("requirements") or context["initial_requirement"] or "用户还没有补充详细需求"
+    feedback = stage.user_feedback or instruction or ""
+    platform_label = {
+        "website": "网站",
+        "miniapp": "小程序",
+        "dashboard": "管理后台",
+        "app": "应用",
+    }.get(workspace.target_platform, workspace.target_platform)
+
+    base = {
+        "source": "rule_based_v1",
+        "feedback_used": feedback,
+        "artifacts": [],
+    }
+
+    if stage.stage_key == WorkspaceStageKey.REQUIREMENTS:
+        recommendation = {
+            **base,
+            "summary": f"建议先把「{workspace.name}」定义为一个面向明确用户场景的{platform_label}，第一版只保留最核心闭环。",
+            "recommended_action": "确认目标用户、核心场景和 MVP 范围；不清楚的商业化、复杂权限和高级运营能力先放到后续版本。",
+            "focus": ["目标用户", "核心问题", "MVP 范围", "暂缓事项"],
+            "options": [
+                {
+                    "title": "小步快跑 MVP",
+                    "description": "优先做一个可演示、可测试、能收集反馈的版本。",
+                    "recommended": True,
+                },
+                {
+                    "title": "完整业务版",
+                    "description": "一次性覆盖更多业务流程，但设计和开发周期更长。",
+                    "recommended": False,
+                },
+            ],
+        }
+        content = "\n".join([
+            f"项目：{workspace.name}",
+            f"目标类型：{platform_label}",
+            "",
+            "需求理解：",
+            requirement,
+            "",
+            "建议确认：",
+            "1. 主要用户是谁？",
+            "2. 用户最想解决的一个问题是什么？",
+            "3. 第一版必须包含哪些页面和功能？",
+            "4. 哪些能力可以先不做？",
+        ])
+        return recommendation, content
+
+    if stage.stage_key == WorkspaceStageKey.PRODUCT:
+        recommendation = {
+            **base,
+            "summary": "建议把产品方案拆成首页/核心操作/结果反馈/设置或管理四类页面，先打通主流程。",
+            "recommended_action": "先确认页面列表和用户主路径，再进入 UI 方向选择。",
+            "focus": ["页面列表", "主流程", "功能优先级", "异常状态"],
+            "options": [
+                {"title": "标准转化路径", "description": "首页说明价值，用户提交需求，系统展示结果。", "recommended": True},
+                {"title": "工具工作台路径", "description": "进入后直接看到任务、数据和操作入口。", "recommended": workspace.target_platform == "dashboard"},
+                {"title": "内容浏览路径", "description": "更适合内容、电商、本地生活类项目。", "recommended": workspace.target_platform == "miniapp"},
+            ],
+        }
+        content = "\n".join([
+            "产品方案草稿：",
+            "1. 首页/入口：说明产品价值，并引导用户开始主流程。",
+            "2. 核心页面：承载用户最主要的操作。",
+            "3. 结果页：展示系统输出、订单、任务或内容状态。",
+            "4. 设置/个人中心：管理账号、偏好和基础信息。",
+            "",
+            "第一版优先级：",
+            "- P0：用户能完成核心闭环。",
+            "- P1：补充筛选、历史记录、状态提示。",
+            "- P2：运营、统计、复杂权限和自动化能力。",
+        ])
+        return recommendation, content
+
+    if stage.stage_key == WorkspaceStageKey.UI_DIRECTION:
+        recommendation = {
+            **base,
+            "summary": "建议先给用户 3 个可理解的 UI 方向，不让小白用户直接面对设计术语。",
+            "recommended_action": "推荐先采用专业清晰型；如果目标用户偏消费端，再选择轻快亲和型。",
+            "focus": ["视觉方向", "参考图", "色彩倾向", "组件密度"],
+            "options": [
+                {
+                    "title": "专业清晰型",
+                    "description": "适合 SaaS、工具、管理后台，强调可信、清楚和效率。",
+                    "recommended": workspace.target_platform in {"website", "dashboard"},
+                },
+                {
+                    "title": "轻快亲和型",
+                    "description": "适合小程序、消费产品和本地生活，颜色更明亮，引导更直接。",
+                    "recommended": workspace.target_platform == "miniapp",
+                },
+                {
+                    "title": "高级品牌型",
+                    "description": "适合官网、作品集和高客单价服务，强调质感和视觉冲击。",
+                    "recommended": False,
+                },
+            ],
+            "artifacts": [
+                {"type": "concept_image", "status": "pending", "label": "概念风格图"},
+                {"type": "reference_image", "status": "pending", "label": "用户参考图分析"},
+            ],
+        }
+        content = "\n".join([
+            "UI 方向建议：",
+            "推荐方案：专业清晰型",
+            "",
+            "理由：",
+            "1. 小白用户更容易判断页面是否清楚、可信。",
+            "2. 后续真实页面截图更容易和代码落地保持一致。",
+            "3. 可以在确认后再生成概念图和页面截图。",
+            "",
+            "下一步需要用户确认：选择一个方向，或上传参考图让多模态模型分析。",
+        ])
+        return recommendation, content
+
+    if stage.stage_key == WorkspaceStageKey.PROTOTYPE:
+        recommendation = {
+            **base,
+            "summary": "原型确认阶段应优先展示真实 HTML/CSS 页面截图，而不是只展示无法落地的效果图。",
+            "recommended_action": "先生成桌面端和移动端关键页面截图，用户确认后再进入开发。",
+            "focus": ["真实页面截图", "移动端适配", "多模态 UI 审查", "用户反馈"],
+            "artifacts": [
+                {"type": "desktop_screenshot", "status": "pending", "label": "桌面端预览截图"},
+                {"type": "mobile_screenshot", "status": "pending", "label": "移动端预览截图"},
+                {"type": "vision_review", "status": "pending", "label": "多模态审查结果"},
+            ],
+        }
+        content = "\n".join([
+            "原型确认计划：",
+            "1. 根据已确认的产品方案和 UI 方向生成真实页面原型。",
+            "2. 自动启动本地预览并截取桌面端和移动端图片。",
+            "3. 用多模态模型检查遮挡、错位、信息层级和移动端可读性。",
+            "4. 用户确认后再进入代码开发。",
+        ])
+        return recommendation, content
+
+    if stage.stage_key == WorkspaceStageKey.TECHNICAL:
+        recommendation = {
+            **base,
+            "summary": "建议采用本地优先的多用户工作区架构，桌面端负责体验，本地后端负责调度，项目代码按工作区隔离。",
+            "recommended_action": "确认技术栈、数据边界和部署测试方式后，再创建代码项目。",
+            "focus": ["技术栈", "数据隔离", "执行边界", "部署方式"],
+            "options": [
+                {"title": "本地优先", "description": "适合当前测试阶段，成本低，对服务器压力小。", "recommended": True},
+                {"title": "云端执行", "description": "便于多人协作，但服务器成本和安全边界要求更高。", "recommended": False},
+            ],
+        }
+        content = "\n".join([
+            "技术方案草稿：",
+            f"- 目标类型：{platform_label}",
+            "- 数据隔离：user_id + workspace_id 双层隔离。",
+            "- 项目目录：每个工作区一个独立代码目录。",
+            "- 修改保护：每次开发执行前创建 checkpoint。",
+            "- 预览方式：本地启动预览服务，截图给用户确认。",
+            "- 部署测试：优先发布到用户自己的测试服务器或临时预览地址。",
+        ])
+        return recommendation, content
+
+    if stage.stage_key == WorkspaceStageKey.DEVELOPMENT:
+        recommendation = {
+            **base,
+            "summary": "开发阶段必须走 checkpoint -> 修改代码 -> 运行检查 -> 展示变更 -> 用户验收。",
+            "recommended_action": "先生成开发任务清单，确认后再允许 Agent 写入工作区代码目录。",
+            "focus": ["任务拆解", "checkpoint", "文件变更", "自动检查"],
+        }
+        content = "\n".join([
+            "开发执行计划：",
+            "1. 创建开发前 checkpoint。",
+            "2. 按阶段产物拆解代码任务。",
+            "3. Agent 只允许修改当前工作区代码目录。",
+            "4. 修改后展示文件变更、运行结果和预览地址。",
+            "5. 用户可以接受、继续调整或回滚。",
+        ])
+        return recommendation, content
+
+    if stage.stage_key == WorkspaceStageKey.ACCEPTANCE:
+        recommendation = {
+            **base,
+            "summary": "验收阶段要让用户看运行效果，而不是看代码或日志。",
+            "recommended_action": "展示预览地址、截图、变更摘要和可选回滚入口。",
+            "focus": ["预览地址", "变更摘要", "验收反馈", "回滚"],
+        }
+        content = "\n".join([
+            "预览验收清单：",
+            "- 页面是否符合确认过的 UI 方向？",
+            "- 核心流程是否能跑通？",
+            "- 移动端是否可读可操作？",
+            "- 是否需要继续调整？",
+        ])
+        return recommendation, content
+
+    recommendation = {
+        **base,
+        "summary": "部署测试阶段优先面向低配置服务器，保持流程简单、可回滚。",
+        "recommended_action": "确认测试服务器、环境变量和部署命令，再执行发布。",
+        "focus": ["测试服务器", "环境变量", "部署日志", "回滚方案"],
+    }
+    content = "\n".join([
+        "部署测试计划：",
+        "1. 检查构建命令和环境变量。",
+        "2. 发布到测试服务器。",
+        "3. 记录访问地址和部署日志。",
+        "4. 失败时保留错误原因并支持回滚。",
+    ])
+    return recommendation, content
+
+
 @router.post("/workspaces", response_model=WorkspaceResponse)
 async def create_workspace(
     req: CreateWorkspaceRequest,
@@ -393,7 +624,7 @@ async def update_workspace_stage(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    _, member = await _get_accessible_workspace(db, workspace_id, user)
+    workspace, member = await _get_accessible_workspace(db, workspace_id, user)
     _require_editor(member)
 
     result = await db.execute(
@@ -414,7 +645,41 @@ async def update_workspace_stage(
         stage.user_feedback = req.user_feedback
     if req.status is not None:
         stage.status = req.status
+    workspace.updated_at = datetime.now(timezone.utc)
 
+    await db.commit()
+    await db.refresh(stage)
+    return WorkspaceStageResponse.from_model(stage)
+
+
+@router.post("/workspaces/{workspace_id}/stages/{stage_key}/generate", response_model=WorkspaceStageResponse)
+async def generate_workspace_stage(
+    workspace_id: str,
+    stage_key: WorkspaceStageKey,
+    req: GenerateStageRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    workspace, member = await _get_accessible_workspace(db, workspace_id, user)
+    _require_editor(member)
+
+    stages = await _get_stages(db, workspace_id)
+    stage = next((item for item in stages if item.stage_key == stage_key), None)
+    if not stage:
+        raise HTTPException(status_code=404, detail="Workspace stage not found")
+
+    recommendation, content = _generate_stage_artifact(
+        workspace=workspace,
+        stages=stages,
+        stage=stage,
+        instruction=req.instruction,
+    )
+    stage.recommendation_json = json.dumps(recommendation, ensure_ascii=False)
+    stage.content = content
+    stage.status = WorkspaceStageStatus.AWAITING_CONFIRMATION
+    stage.approved_by = None
+    stage.approved_at = None
+    workspace.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(stage)
     return WorkspaceStageResponse.from_model(stage)
@@ -448,6 +713,7 @@ async def approve_workspace_stage(
             next_stage.status = WorkspaceStageStatus.AWAITING_CONFIRMATION
     else:
         workspace.current_stage = stage_key
+    workspace.updated_at = datetime.now(timezone.utc)
 
     await db.commit()
     await db.refresh(workspace)
@@ -463,7 +729,7 @@ async def request_stage_revision(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    _, member = await _get_accessible_workspace(db, workspace_id, user)
+    workspace, member = await _get_accessible_workspace(db, workspace_id, user)
     _require_editor(member)
 
     result = await db.execute(
@@ -478,6 +744,7 @@ async def request_stage_revision(
 
     stage.status = WorkspaceStageStatus.REVISION_REQUESTED
     stage.user_feedback = req.feedback
+    workspace.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(stage)
     return WorkspaceStageResponse.from_model(stage)

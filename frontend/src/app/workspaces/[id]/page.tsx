@@ -20,6 +20,7 @@ import {
   Rocket,
   Send,
   Sparkles,
+  Wand2,
 } from "lucide-react";
 
 import { TopNav } from "../../components/topnav";
@@ -45,7 +46,18 @@ type Recommendation = {
   summary?: string;
   recommended_action?: string;
   focus?: string[];
-  artifacts?: unknown[];
+  options?: {
+    title: string;
+    description: string;
+    recommended?: boolean;
+  }[];
+  artifacts?: {
+    type?: string;
+    status?: string;
+    label?: string;
+  }[];
+  source?: string;
+  feedback_used?: string;
 };
 
 type WorkspaceStage = {
@@ -118,6 +130,7 @@ export default function WorkspaceDetailPage() {
   const [feedback, setFeedback] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [error, setError] = useState("");
 
   const loadWorkspace = async () => {
@@ -201,6 +214,40 @@ export default function WorkspaceDetailPage() {
     }
   };
 
+  const generateStage = async () => {
+    if (!selectedStage || generating) return;
+    setGenerating(true);
+    setError("");
+    try {
+      const res = await fetch(
+        `/api/workspaces/${workspaceId}/stages/${selectedStage.stage_key}/generate`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ instruction: feedback.trim() || null }),
+        }
+      );
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || "生成推荐失败");
+      }
+      const stage = await res.json();
+      setWorkspace((current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          stages: current.stages.map((item) => item.id === stage.id ? stage : item),
+        };
+      });
+      setSelectedKey(stage.stage_key);
+      setFeedback(stage.user_feedback || "");
+    } catch (err: any) {
+      setError(err.message || "生成推荐失败");
+    } finally {
+      setGenerating(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
@@ -234,6 +281,8 @@ export default function WorkspaceDetailPage() {
     : 0;
   const StageIcon = STAGE_ICON[selectedStage.stage_key];
   const focus = selectedStage.recommendation?.focus || [];
+  const options = selectedStage.recommendation?.options || [];
+  const artifacts = selectedStage.recommendation?.artifacts || [];
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
@@ -342,14 +391,24 @@ export default function WorkspaceDetailPage() {
                 </div>
               </div>
 
-              <button
-                onClick={approveStage}
-                disabled={saving || selectedStage.status === "approved"}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {saving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
-                确认通过
-              </button>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <button
+                  onClick={generateStage}
+                  disabled={generating}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-indigo-200 bg-white px-4 py-2.5 text-sm font-medium text-indigo-600 shadow-sm transition hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-indigo-500/30 dark:bg-slate-900 dark:text-indigo-300 dark:hover:bg-indigo-500/10"
+                >
+                  {generating ? <Loader2 size={16} className="animate-spin" /> : <Wand2 size={16} />}
+                  生成推荐
+                </button>
+                <button
+                  onClick={approveStage}
+                  disabled={saving || selectedStage.status === "approved"}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {saving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
+                  确认通过
+                </button>
+              </div>
             </div>
 
             <div className="grid gap-4 xl:grid-cols-2">
@@ -373,6 +432,45 @@ export default function WorkspaceDetailPage() {
                       >
                         {item}
                       </span>
+                    ))}
+                  </div>
+                )}
+                {options.length > 0 && (
+                  <div className="mt-5 space-y-2">
+                    <div className="text-xs font-semibold text-slate-400">可选方向</div>
+                    {options.map((option) => (
+                      <div
+                        key={option.title}
+                        className={`rounded-xl border p-3 ${
+                          option.recommended
+                            ? "border-indigo-200 bg-indigo-50/70 dark:border-indigo-500/30 dark:bg-indigo-500/10"
+                            : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"
+                        }`}
+                      >
+                        <div className="mb-1 flex items-center justify-between gap-2">
+                          <span className="text-sm font-medium text-slate-900 dark:text-slate-100">{option.title}</span>
+                          {option.recommended && (
+                            <span className="rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] font-medium text-white">推荐</span>
+                          )}
+                        </div>
+                        <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">{option.description}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {artifacts.length > 0 && (
+                  <div className="mt-5 space-y-2">
+                    <div className="text-xs font-semibold text-slate-400">后续视觉产物</div>
+                    {artifacts.map((artifact) => (
+                      <div
+                        key={`${artifact.type}-${artifact.label}`}
+                        className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-800 dark:bg-slate-900"
+                      >
+                        <span className="text-slate-600 dark:text-slate-300">{artifact.label || artifact.type}</span>
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                          {artifact.status || "pending"}
+                        </span>
+                      </div>
                     ))}
                   </div>
                 )}
