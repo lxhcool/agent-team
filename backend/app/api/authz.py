@@ -1,5 +1,7 @@
 """Authorization helpers for API endpoints."""
 
+from typing import Optional
+
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,7 +22,7 @@ async def get_owned_planning_session(
     return session
 
 
-async def get_user_from_query_token(db: AsyncSession, token: str | None) -> User:
+async def get_user_from_query_token(db: AsyncSession, token: Optional[str]) -> User:
     """Authenticate endpoints, such as SSE, that cannot send Bearer headers."""
     if not token:
         raise HTTPException(
