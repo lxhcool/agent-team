@@ -15,6 +15,7 @@ env/
 node_modules/
 .next/
 out/
+dist-desktop/
 
 # IDE
 .idea/
