@@ -14,6 +14,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -79,6 +80,36 @@ class TaskStatus(str, enum.Enum):
     BLOCKED = "blocked"
     WAITING_APPROVAL = "waiting_approval"
     CANCELLED = "cancelled"
+
+
+class WorkspaceStatus(str, enum.Enum):
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+
+
+class WorkspaceMemberRole(str, enum.Enum):
+    OWNER = "owner"
+    EDITOR = "editor"
+    VIEWER = "viewer"
+
+
+class WorkspaceStageKey(str, enum.Enum):
+    REQUIREMENTS = "requirements"
+    PRODUCT = "product"
+    UI_DIRECTION = "ui_direction"
+    PROTOTYPE = "prototype"
+    TECHNICAL = "technical"
+    DEVELOPMENT = "development"
+    ACCEPTANCE = "acceptance"
+    DEPLOYMENT = "deployment"
+
+
+class WorkspaceStageStatus(str, enum.Enum):
+    DRAFT = "draft"
+    AWAITING_CONFIRMATION = "awaiting_confirmation"
+    APPROVED = "approved"
+    REVISION_REQUESTED = "revision_requested"
+    SKIPPED = "skipped"
 
 
 # ===== P1-1: Planning Session State Transition Validation =====
@@ -159,6 +190,76 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
+class Workspace(Base):
+    """Product workspace that owns the staged product/design/code flow."""
+    __tablename__ = "workspaces"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    owner_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    target_platform: Mapped[str] = mapped_column(String(50), default="website")
+    status: Mapped[WorkspaceStatus] = mapped_column(Enum(WorkspaceStatus), default=WorkspaceStatus.ACTIVE)
+    current_stage: Mapped[WorkspaceStageKey] = mapped_column(
+        Enum(WorkspaceStageKey), default=WorkspaceStageKey.REQUIREMENTS
+    )
+    created_by: Mapped[str] = mapped_column(String(36), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+    members: Mapped[List["WorkspaceMember"]] = relationship(
+        back_populates="workspace", cascade="all, delete-orphan"
+    )
+    stages: Mapped[List["WorkspaceStage"]] = relationship(
+        back_populates="workspace", cascade="all, delete-orphan", order_by="WorkspaceStage.order"
+    )
+
+
+class WorkspaceMember(Base):
+    """Workspace access list for multi-user isolation."""
+    __tablename__ = "workspace_members"
+    __table_args__ = (UniqueConstraint("workspace_id", "user_id", name="uq_workspace_member"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    workspace_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("workspaces.id"), nullable=False, index=True
+    )
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    role: Mapped[WorkspaceMemberRole] = mapped_column(
+        Enum(WorkspaceMemberRole), default=WorkspaceMemberRole.EDITOR
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+    workspace: Mapped["Workspace"] = relationship(back_populates="members")
+
+
+class WorkspaceStage(Base):
+    """A confirmable stage in a workspace's AI development-team flow."""
+    __tablename__ = "workspace_stages"
+    __table_args__ = (UniqueConstraint("workspace_id", "stage_key", name="uq_workspace_stage"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    workspace_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("workspaces.id"), nullable=False, index=True
+    )
+    stage_key: Mapped[WorkspaceStageKey] = mapped_column(Enum(WorkspaceStageKey), nullable=False)
+    title: Mapped[str] = mapped_column(String(100), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[WorkspaceStageStatus] = mapped_column(
+        Enum(WorkspaceStageStatus), default=WorkspaceStageStatus.DRAFT
+    )
+    order: Mapped[int] = mapped_column(Integer, default=0)
+    recommendation_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    user_feedback: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    approved_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+    workspace: Mapped["Workspace"] = relationship(back_populates="stages")
 
 
 class PlanningSession(Base):

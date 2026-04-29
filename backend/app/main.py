@@ -25,6 +25,7 @@ from app.api import (
     observability,
     tools,
     auth,
+    workspaces,
 )
 
 
@@ -88,6 +89,7 @@ app.add_middleware(
 
 app.include_router(auth.router, prefix="/api", tags=["auth"])
 app.include_router(health.router, prefix="/api", tags=["health"])
+app.include_router(workspaces.router, prefix="/api", tags=["workspaces"])
 app.include_router(planning.router, prefix="/api", tags=["planning"])
 app.include_router(messages.router, prefix="/api", tags=["messages"])
 app.include_router(agents.router, prefix="/api/settings", tags=["agents"])
