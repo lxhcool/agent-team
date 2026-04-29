@@ -299,7 +299,7 @@ class ParallelDAGScheduler:
                     "title": t.title,
                     "assigned_agent": t.assigned_agent,
                     "status": t.status.value,
-                    "risk_level": t.risk_level,
+                    "risk_level": getattr(t, "risk_level", "medium"),
                 })
                 remaining.remove(tid)
                 completed_ids.add(tid)

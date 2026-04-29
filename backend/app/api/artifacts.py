@@ -16,9 +16,11 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import get_current_user
 from app.core.config import settings
 from app.core.database import get_db
-from app.models.models import Artifact, PlanningSession, PlanningStatus, Task, TaskStatus
+from app.api.authz import get_owned_planning_session
+from app.models.models import Artifact, PlanningStatus, Task, TaskStatus, User
 from app.services.artifact import artifact_service
 
 router = APIRouter()
@@ -51,11 +53,10 @@ class ExportResponse(BaseModel):
 async def list_artifacts(
     session_id: str,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """List all artifacts for a planning session."""
-    session = await db.get(PlanningSession, session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    await get_owned_planning_session(db, session_id, user)
 
     result = await db.execute(
         select(Artifact).where(Artifact.session_id == session_id).order_by(Artifact.created_at.asc())
@@ -83,14 +84,13 @@ async def list_artifacts(
 async def get_proposal(
     session_id: str,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """Get the proposal.md content for a planning session.
 
     If the artifact doesn't exist yet, it will be generated on-the-fly.
     """
-    session = await db.get(PlanningSession, session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = await get_owned_planning_session(db, session_id, user)
 
     # Only allow proposal access after proposal is generated
     allowed_statuses = {
@@ -123,14 +123,13 @@ async def get_proposal(
 async def get_execution_plan(
     session_id: str,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """Get the execution_plan.json content for a planning session.
 
     If the artifact doesn't exist yet, it will be generated on-the-fly.
     """
-    session = await db.get(PlanningSession, session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = await get_owned_planning_session(db, session_id, user)
 
     # Only allow plan access after approval
     allowed_statuses = {
@@ -162,15 +161,14 @@ async def get_execution_plan(
 async def export_session(
     session_id: str,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """Generate and export both proposal.md and execution_plan.json.
 
     This endpoint triggers artifact generation and returns a status
     indicating what was generated, plus a CLI pull command.
     """
-    session = await db.get(PlanningSession, session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = await get_owned_planning_session(db, session_id, user)
 
     result = ExportResponse()
 
@@ -198,6 +196,7 @@ async def export_session(
 async def get_failed_task_artifacts(
     session_id: str,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """Get artifacts related to failed tasks for a planning session (F-003).
 
@@ -207,9 +206,7 @@ async def get_failed_task_artifacts(
     Returns:
         List of failed tasks with their associated artifacts.
     """
-    session = await db.get(PlanningSession, session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    await get_owned_planning_session(db, session_id, user)
 
     # Get all failed tasks for this session
     task_result = await db.execute(

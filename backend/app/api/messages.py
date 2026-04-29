@@ -19,8 +19,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from app.core.config import settings
+from app.core.auth import get_current_user
 from app.core.database import get_db
-from app.models.models import Message, MessageType, PlanningSession, PlanningStatus, Task, Artifact
+from app.api.authz import get_owned_planning_session, get_user_from_query_token
+from app.models.models import Message, MessageType, PlanningSession, PlanningStatus, Task, Artifact, User
 from app.services.event_bus import event_bus, Event
 from app.services.orchestrator import get_orchestrator
 
@@ -107,11 +109,10 @@ async def get_messages(
     limit: int = Query(default=100, ge=1, le=500),
     after_seq: Optional[int] = Query(default=None),
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """Get messages for a planning session, optionally after a sequence number."""
-    session = await db.get(PlanningSession, session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    await get_owned_planning_session(db, session_id, user)
 
     query = (
         select(Message)
@@ -146,11 +147,10 @@ async def send_message(
     session_id: str,
     req: SendMessageRequest,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """Send a user message to a planning session and trigger agent response if needed."""
-    session = await db.get(PlanningSession, session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = await get_owned_planning_session(db, session_id, user)
 
     # Get next seq
     result = await db.execute(
@@ -211,11 +211,10 @@ async def send_message(
 async def get_tasks(
     session_id: str,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """Get tasks for a planning session."""
-    session = await db.get(PlanningSession, session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    await get_owned_planning_session(db, session_id, user)
 
     result = await db.execute(
         select(Task)
@@ -245,11 +244,10 @@ async def get_tasks(
 async def approve_session(
     session_id: str,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """Approve the proposal and trigger execution plan generation."""
-    session = await db.get(PlanningSession, session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = await get_owned_planning_session(db, session_id, user)
     if session.status != PlanningStatus.AWAITING_APPROVAL:
         raise HTTPException(
             status_code=400,
@@ -278,15 +276,14 @@ async def revise_session(
     session_id: str,
     req: ReviseRequest,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """Reject the proposal and send it back for revision with user feedback.
 
     The session goes back to GENERATING_PROPOSAL state, and the agents
     will refine the proposal based on the user's feedback, then re-review.
     """
-    session = await db.get(PlanningSession, session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = await get_owned_planning_session(db, session_id, user)
     if session.status != PlanningStatus.AWAITING_APPROVAL:
         raise HTTPException(
             status_code=400,
@@ -332,11 +329,10 @@ async def revise_session(
 async def start_session(
     session_id: str,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """Explicitly start the planning flow for a session."""
-    session = await db.get(PlanningSession, session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = await get_owned_planning_session(db, session_id, user)
     if session.status != PlanningStatus.CREATED:
         raise HTTPException(
             status_code=400,
@@ -354,11 +350,10 @@ async def start_session(
 async def retry_session(
     session_id: str,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """Retry a failed planning session by resetting status and restarting."""
-    session = await db.get(PlanningSession, session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = await get_owned_planning_session(db, session_id, user)
     if session.status != PlanningStatus.FAILED:
         raise HTTPException(
             status_code=400,
@@ -381,8 +376,10 @@ async def retry_session(
 async def interrupt_planning_session(
     session_id: str,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """Interrupt an ongoing planning session — cancels background task and sets status to cancelled."""
+    await get_owned_planning_session(db, session_id, user)
     # Cancel the background task if running
     task = _running_planning_tasks.pop(session_id, None)
     if task and not task.done():
@@ -394,8 +391,6 @@ async def interrupt_planning_session(
 
     # Update session status
     session = await db.get(PlanningSession, session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
     if session.status in (PlanningStatus.PLANNING, PlanningStatus.CREATED):
         session.status = PlanningStatus.CANCELLED
         await db.commit()
@@ -410,8 +405,15 @@ async def interrupt_planning_session(
 
 
 @router.get("/planning-sessions/{session_id}/stream")
-async def sse_stream(session_id: str):
+async def sse_stream(
+    session_id: str,
+    token: Optional[str] = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
     """SSE endpoint for real-time event streaming."""
+    user = await get_user_from_query_token(db, token)
+    await get_owned_planning_session(db, session_id, user)
+
     async def event_generator():
         queue = event_bus.subscribe(session_id)
         try:
@@ -452,6 +454,7 @@ async def upload_file(
     session_id: str,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """Upload a file attachment to a planning session (UF-008).
 
@@ -463,9 +466,7 @@ async def upload_file(
     - Only allowed extensions (UF-007)
     """
     # Validate session exists
-    session = await db.get(PlanningSession, session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = await get_owned_planning_session(db, session_id, user)
 
     # Validate file extension (UF-007)
     filename = file.filename or "unknown"

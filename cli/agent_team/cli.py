@@ -739,6 +739,7 @@ class ExecutionRunner:
         # 执行任务操作
         operations_log = []
         has_error = False
+        validation_failed = False
 
         # ===== LLM 代码生成 =====
         if self.llm_client:
@@ -863,20 +864,19 @@ class ExecutionRunner:
                     click.echo(f"  ❌ Validation failed: {vc} (exit={exit_code})")
                     if stderr.strip():
                         click.echo(f"     stderr: {stderr[:500]}")
-                    # Don't mark as error if we generated files - validation might just need more work
-                    if not self.llm_client:
-                        has_error = True
+                    validation_failed = True
             except PermissionError as e:
                 operations_log.append(f"Command blocked: {vc} - {e}")
                 click.echo(f"  🚫 Command blocked: {vc} - {e}")
-                if not self.llm_client:
-                    has_error = True
+                validation_failed = True
             except TimeoutError as e:
                 operations_log.append(f"Command timed out: {vc}")
                 click.echo(f"  ⏱ Command timed out: {vc}")
+                validation_failed = True
             except Exception as e:
                 operations_log.append(f"Command error: {vc} - {e}")
                 click.echo(f"  ❌ Command error: {vc} - {e}")
+                validation_failed = True
 
         # 如果没有任何验证命令且生成了文件，标记为已完成
         if not validation_commands and not has_error:
@@ -888,8 +888,9 @@ class ExecutionRunner:
                 click.echo("  ✅ Task marked as completed (no validation)")
 
         task_finished = datetime.now(timezone.utc).isoformat()
-        # With LLM, consider task completed if files were generated even if validation fails
-        if self.llm_client and any("Generated" in op or "Written" in op for op in operations_log):
+        if validation_failed or has_error:
+            status = "failed"
+        elif self.llm_client and any("Generated" in op or "Written" in op for op in operations_log):
             status = "completed"
         else:
             status = "completed" if not has_error else "failed"

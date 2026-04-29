@@ -391,7 +391,6 @@ class PlanningOrchestrator:
                                     dependencies_json=json.dumps(td.get("dependencies", [])),
                                     target_paths_json=json.dumps(td.get("target_paths", [])),
                                     validation_commands_json=json.dumps(td.get("validation_commands", [])),
-                                    risk_level=td.get("risk_level", "low"),
                                     order=i,
                                 )
                                 db.add(task)

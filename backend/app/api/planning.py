@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
 from app.core.database import get_db
+from app.api.authz import get_owned_planning_session
 from app.models.models import PlanningSession, PlanningStatus, User
 
 router = APIRouter()
@@ -92,11 +93,10 @@ async def list_planning_sessions(
 async def get_planning_session(
     session_id: str,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """Get a Planning Session by ID."""
-    session = await db.get(PlanningSession, session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Planning session not found")
+    session = await get_owned_planning_session(db, session_id, user)
     return PlanningSessionResponse.from_orm(session)
 
 
@@ -104,12 +104,11 @@ async def get_planning_session(
 async def cancel_planning_session(
     session_id: str,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """Cancel a Planning Session (P1-1: with state transition validation)."""
     from app.models.models import validate_planning_transition
-    session = await db.get(PlanningSession, session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Planning session not found")
+    session = await get_owned_planning_session(db, session_id, user)
     if not validate_planning_transition(session.status, PlanningStatus.CANCELLED):
         raise HTTPException(
             status_code=400,
@@ -124,11 +123,10 @@ async def cancel_planning_session(
 async def delete_planning_session(
     session_id: str,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """Delete a Planning Session and all related data."""
-    session = await db.get(PlanningSession, session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Planning session not found")
+    session = await get_owned_planning_session(db, session_id, user)
 
     from app.models.models import Message, Task, Artifact, LLMCall
     # Delete related records
@@ -147,8 +145,13 @@ async def delete_planning_session(
 # ===== P2-SS-009: Session Pause/Resume API =====
 
 @router.post("/planning-sessions/{session_id}/pause")
-async def pause_planning_session(session_id: str):
+async def pause_planning_session(
+    session_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """P2-SS-009: Pause a Planning Session (save checkpoint)."""
+    await get_owned_planning_session(db, session_id, user)
     from app.services.execution import session_pause_service
     session = await session_pause_service.pause_planning_session(session_id)
     if not session:
@@ -166,8 +169,14 @@ class RegisterWebhookRequest(BaseModel):
 
 
 @router.post("/planning-sessions/{session_id}/webhooks")
-async def register_webhook(session_id: str, req: RegisterWebhookRequest):
+async def register_webhook(
+    session_id: str,
+    req: RegisterWebhookRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """P2-EX-001: Register a webhook for session events."""
+    await get_owned_planning_session(db, session_id, user)
     from app.services.execution import webhook_notifier
     webhook_notifier.register_webhook(
         session_id=session_id,
@@ -180,8 +189,13 @@ async def register_webhook(session_id: str, req: RegisterWebhookRequest):
 
 
 @router.delete("/planning-sessions/{session_id}/webhooks")
-async def unregister_webhooks(session_id: str):
+async def unregister_webhooks(
+    session_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """P2-EX-001: Remove all webhooks for a session."""
+    await get_owned_planning_session(db, session_id, user)
     from app.services.execution import webhook_notifier
     webhook_notifier.unregister_webhooks(session_id)
     return {"status": "removed", "session_id": session_id}
@@ -222,8 +236,13 @@ async def resume_execution_session(session_id: str):
 # ===== P2-O-013: Parallel DAG Execution Waves API =====
 
 @router.get("/planning-sessions/{session_id}/parallel-waves")
-async def get_parallel_waves(session_id: str):
+async def get_parallel_waves(
+    session_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """P2-O-013: Get tasks organized in parallel execution waves."""
+    await get_owned_planning_session(db, session_id, user)
     from app.services.execution import parallel_dag_scheduler
     waves = await parallel_dag_scheduler.get_parallel_waves(session_id)
     return {"session_id": session_id, "waves": waves, "total_waves": len(waves)}
