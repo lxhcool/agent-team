@@ -147,28 +147,36 @@ function findFreePort(startPort) {
   });
 }
 
-function waitForHttp(url, timeoutMs = 60000, label = url) {
+function waitForHttp(url, timeoutMs = 60000, label = url, requestTimeoutMs = 3000) {
   const started = Date.now();
   let lastLogAt = 0;
   let lastState = "not checked yet";
 
   return new Promise((resolve, reject) => {
     const poll = () => {
+      let settled = false;
       const req = http.get(url, (res) => {
         res.resume();
         if (res.statusCode && res.statusCode >= 200 && res.statusCode < 400) {
+          settled = true;
           resolve();
           return;
         }
+        if (settled) return;
+        settled = true;
         lastState = `HTTP ${res.statusCode || "unknown"}`;
         retry();
       });
 
       req.on("error", (error) => {
+        if (settled) return;
+        settled = true;
         lastState = error.message;
         retry();
       });
-      req.setTimeout(3000, () => {
+      req.setTimeout(requestTimeoutMs, () => {
+        if (settled) return;
+        settled = true;
         lastState = "request timed out";
         req.destroy();
         retry();
@@ -250,9 +258,9 @@ function spawnManaged(command, args, options) {
   return child;
 }
 
-function waitForManagedHttp(url, child, label, timeoutMs = 60000) {
+function waitForManagedHttp(url, child, label, timeoutMs = 60000, requestTimeoutMs = 3000) {
   return Promise.race([
-    waitForHttp(url, timeoutMs, label),
+    waitForHttp(url, timeoutMs, label, requestTimeoutMs),
     new Promise((_, reject) => {
       child.once("exit", (code, signal) => {
         reject(new Error(`${label} process exited before it was ready (code=${code}, signal=${signal || "none"})`));
@@ -276,10 +284,6 @@ function waitForManagedTcp(host, port, child, label, timeoutMs = 60000) {
       });
     }),
   ]);
-}
-
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function getPythonCommand() {
@@ -347,7 +351,8 @@ async function startLocalServices() {
   const initialPageUrl = `${frontendUrl}/login`;
   log(`waiting for frontend server: 127.0.0.1:${resolvedFrontendPort}`);
   await waitForManagedTcp("127.0.0.1", resolvedFrontendPort, frontendProcess, "frontend", 120000);
-  await delay(500);
+  log(`warming frontend page: ${initialPageUrl}`);
+  await waitForManagedHttp(initialPageUrl, frontendProcess, "frontend page", 180000, 60000);
   log("frontend is ready");
 
   return {
