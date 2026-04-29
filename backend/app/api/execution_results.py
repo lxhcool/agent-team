@@ -8,8 +8,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import get_current_user
 from app.core.database import get_db
 from app.core.config import settings
+from app.api.authz import get_owned_planning_session
 from app.models.models import (
     Artifact,
     ExecutionSession,
@@ -17,6 +19,7 @@ from app.models.models import (
     PlanningSession,
     Task,
     TaskStatus,
+    User,
 )
 from app.services.event_bus import event_bus, Event
 
@@ -55,6 +58,7 @@ class ExecutionResultResponse(BaseModel):
 async def submit_execution_result(
     req: ExecutionResultRequest,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """CLI reports execution results back to the server.
 
@@ -67,7 +71,7 @@ async def submit_execution_result(
     """
     # 1. Find PlanningSession
     planning_session = await db.get(PlanningSession, req.source_session_id)
-    if not planning_session:
+    if not planning_session or planning_session.user_id != user.id:
         raise HTTPException(status_code=404, detail="Planning session not found")
 
     # 2. Create or update ExecutionSession
@@ -77,6 +81,8 @@ async def submit_execution_result(
     exec_session = existing_exec.scalars().first()
 
     if exec_session:
+        if exec_session.user_id != user.id:
+            raise HTTPException(status_code=404, detail="Execution session not found")
         # Update existing
         exec_status = _map_execution_status(req.status)
         exec_session.status = exec_status
@@ -97,7 +103,10 @@ async def submit_execution_result(
     # 3. Update Task statuses
     for task_item in req.tasks:
         task_result = await db.execute(
-            select(Task).where(Task.id == task_item.task_id)
+            select(Task).where(
+                Task.id == task_item.task_id,
+                Task.session_id == req.source_session_id,
+            )
         )
         task = task_result.scalars().first()
         if task:
@@ -166,20 +175,22 @@ async def submit_execution_result(
 async def get_execution_result(
     plan_id: str,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """Get execution result by plan_id."""
     result = await db.execute(
         select(ExecutionSession).where(ExecutionSession.plan_id == plan_id)
     )
     exec_session = result.scalars().first()
-    if not exec_session:
+    if not exec_session or exec_session.user_id != user.id:
         raise HTTPException(status_code=404, detail="Execution session not found")
 
     # Get artifact
+    artifact_session_id = plan_id.removeprefix("plan_") if plan_id.startswith("plan_") else plan_id
     artifact_result = await db.execute(
         select(Artifact).where(
             Artifact.artifact_type == "execution_result",
-            Artifact.session_id == exec_session.plan_id,
+            Artifact.session_id.in_([artifact_session_id, exec_session.plan_id]),
         ).order_by(Artifact.created_at.desc())
     )
     artifact = artifact_result.scalars().first()
@@ -214,8 +225,10 @@ async def get_execution_result(
 async def get_session_execution_result(
     session_id: str,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """Get execution result for a planning session."""
+    await get_owned_planning_session(db, session_id, user)
     # Find ExecutionSession via plan_id pattern
     plan_id = f"plan_{session_id}"
     result = await db.execute(

@@ -2,12 +2,14 @@
 
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import get_current_user
 from app.core.database import get_db
-from app.models.models import LLMCall, PlanningSession
+from app.api.authz import get_owned_planning_session
+from app.models.models import LLMCall, PlanningSession, User
 
 router = APIRouter()
 
@@ -15,15 +17,24 @@ router = APIRouter()
 # ===== Endpoints =====
 
 @router.get("/usage")
-async def get_aggregated_usage(db: AsyncSession = Depends(get_db)):
+async def get_aggregated_usage(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """Get aggregated usage statistics across all sessions."""
+    owned_session_ids = (
+        select(PlanningSession.id)
+        .where(PlanningSession.user_id == user.id)
+        .scalar_subquery()
+    )
+
     # Total aggregates
     total_result = await db.execute(
         select(
             func.count(LLMCall.id).label("total_calls"),
             func.coalesce(func.sum(LLMCall.prompt_tokens + LLMCall.completion_tokens), 0).label("total_tokens"),
             func.coalesce(func.sum(LLMCall.cost), 0.0).label("total_cost"),
-        )
+        ).where(LLMCall.session_id.in_(owned_session_ids))
     )
     total_row = total_result.one()
 
@@ -34,7 +45,9 @@ async def get_aggregated_usage(db: AsyncSession = Depends(get_db)):
             func.count(LLMCall.id).label("calls"),
             func.coalesce(func.sum(LLMCall.prompt_tokens + LLMCall.completion_tokens), 0).label("tokens"),
             func.coalesce(func.sum(LLMCall.cost), 0.0).label("cost"),
-        ).group_by(LLMCall.provider)
+        )
+        .where(LLMCall.session_id.in_(owned_session_ids))
+        .group_by(LLMCall.provider)
     )
     by_provider = {}
     for row in by_provider_result.all():
@@ -51,7 +64,9 @@ async def get_aggregated_usage(db: AsyncSession = Depends(get_db)):
             func.count(LLMCall.id).label("calls"),
             func.coalesce(func.sum(LLMCall.prompt_tokens + LLMCall.completion_tokens), 0).label("tokens"),
             func.coalesce(func.sum(LLMCall.cost), 0.0).label("cost"),
-        ).group_by(LLMCall.model)
+        )
+        .where(LLMCall.session_id.in_(owned_session_ids))
+        .group_by(LLMCall.model)
     )
     by_model = {}
     for row in by_model_result.all():
@@ -68,7 +83,9 @@ async def get_aggregated_usage(db: AsyncSession = Depends(get_db)):
             func.count(LLMCall.id).label("calls"),
             func.coalesce(func.sum(LLMCall.prompt_tokens + LLMCall.completion_tokens), 0).label("tokens"),
             func.coalesce(func.sum(LLMCall.cost), 0.0).label("cost"),
-        ).group_by(LLMCall.agent_name)
+        )
+        .where(LLMCall.session_id.in_(owned_session_ids))
+        .group_by(LLMCall.agent_name)
     )
     by_agent = {}
     for row in by_agent_result.all():
@@ -86,7 +103,9 @@ async def get_aggregated_usage(db: AsyncSession = Depends(get_db)):
             func.count(LLMCall.id).label("calls"),
             func.coalesce(func.sum(LLMCall.prompt_tokens + LLMCall.completion_tokens), 0).label("tokens"),
             func.coalesce(func.sum(LLMCall.cost), 0.0).label("cost"),
-        ).group_by(LLMCall.session_id)
+        )
+        .where(LLMCall.session_id.in_(owned_session_ids))
+        .group_by(LLMCall.session_id)
     )
 
     session_ids = []
@@ -103,7 +122,10 @@ async def get_aggregated_usage(db: AsyncSession = Depends(get_db)):
     sessions_list = []
     if session_ids:
         planning_result = await db.execute(
-            select(PlanningSession).where(PlanningSession.id.in_(session_ids))
+            select(PlanningSession).where(
+                PlanningSession.id.in_(session_ids),
+                PlanningSession.user_id == user.id,
+            )
         )
         session_map = {s.id: s for s in planning_result.scalars().all()}
         for sid in session_ids:
@@ -132,11 +154,10 @@ async def get_aggregated_usage(db: AsyncSession = Depends(get_db)):
 async def get_session_usage(
     session_id: str,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """Get detailed usage statistics for a specific session."""
-    session = await db.get(PlanningSession, session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = await get_owned_planning_session(db, session_id, user)
 
     # Session total
     total_result = await db.execute(
