@@ -1,6 +1,6 @@
 # Workspace Development Progress
 
-Last updated: 2026-04-29
+Last updated: 2026-04-30
 
 ## Product Direction
 
@@ -50,9 +50,9 @@ Each stage must support:
   - `/workspaces/[id]`
   - top navigation entry
 - Unified homepage input:
-  - planning input now creates a workspace and a workspace-bound planning workflow
-  - workspace detail shows linked planning workflows
-  - stage revision text is entered from the homepage input with workspace/stage context
+  - homepage input now only creates a workspace for a new requirement
+  - planning work is handled inside workspace stages instead of a separate user-facing planning session
+  - stage revision text is entered directly inside the workspace stage
 - Stage recommendation generation:
   - LLM-first generation using user model settings
   - rule-based fallback when model is unavailable or returns invalid JSON
@@ -83,9 +83,9 @@ Each stage must support:
   - checkpoint before code changes
   - file change summaries
   - rollback
-- Connect workspace stages to Planning/Execution:
-  - create planning session from workspace: first pass done through homepage input
-  - write planning output back to stages
+- Connect workspace stages to development execution:
+  - migrate useful planning-session logic into workspace stages
+  - write planning output directly back to stages
   - run development execution under workspace boundary
 
 ## Engineering Notes
@@ -93,6 +93,7 @@ Each stage must support:
 - Every workspace-owned record must be isolated by `workspace_id`.
 - Every user-owned access path must be authorized through `workspace_members`.
 - Desktop UI can hide CLI details, but CLI should remain available for advanced users.
+- Planning sessions are legacy/advanced records; the normal user flow should treat workspace stages as the product planning surface.
 - Prototype confirmation must favor real rendered HTML/CSS over decorative generated images.
 - Concept images are useful for style exploration, but approval should be based on rendered previews and screenshots.
 - In development mode, frontend page changes hot reload through Next. Electron main/preload changes and backend process changes still require restarting the desktop app.

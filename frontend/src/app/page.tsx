@@ -1,23 +1,17 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
-  ArrowRight, Loader2, Sparkles, Clock, X,
+  Loader2, Sparkles, Clock, X,
   MessageCircle, Trash2, ChevronRight, UsersRound, Zap,
-  CheckCircle2, AlertCircle, MessageSquare, Diamond, RefreshCcw
+  MessageSquare
 } from "lucide-react";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 
 import { TopNav } from "./components/topnav";
 import { useAuth } from "@/lib/auth";
-
-type PlanningSession = {
-  id: string; workspace_id?: string | null; title: string; status: string; mode: string;
-  input_text: string; summary: string | null;
-  created_at: string; updated_at: string;
-};
 
 type WorkspaceSummary = {
   id: string; name: string; description: string | null; target_platform: string;
@@ -40,7 +34,7 @@ const STATUS: Record<string, { label: string; color: string; bg: string; icon: R
   reviewing:     { label: "审查中", color: "var(--accent)", bg: "var(--accent-soft)", icon: <Loader2 size={9} className="animate-spin" /> },
   awaiting_approval: { label: "待审批", color: "var(--warning)", bg: "var(--warning-soft)", icon: <Sparkles size={9} /> },
   generating_plan: { label: "生成计划", color: "var(--accent)", bg: "var(--accent-soft)", icon: <Sparkles size={9} /> },
-  ready_for_export:{ label: "可导出", color: "var(--success)", bg: "var(--success-soft)", icon: <ArrowRight size={9} /> },
+  ready_for_export:{ label: "可导出", color: "var(--success)", bg: "var(--success-soft)", icon: <Sparkles size={9} /> },
   completed:     { label: "已完成", color: "var(--success)", bg: "var(--success-soft)", icon: <Sparkles size={9} /> },
   cancelled:     { label: "已取消", color: "var(--muted)", bg: "var(--accent-soft)", icon: <X size={9} /> },
   failed:        { label: "失败", color: "var(--danger)", bg: "var(--danger-soft)", icon: <X size={9} /> },
@@ -96,49 +90,26 @@ const ROUNDTABLE_PRESETS: { icon: string; title: string; desc: string; agents: {
 
 const LIMIT = 6;
 
-function PageLoadingFallback() {
-  return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center">
-      <div className="flex gap-1.5"><span className="typing-dot" /><span className="typing-dot" /><span className="typing-dot" /></div>
-    </div>
-  );
-}
-
 export default function HomePage() {
-  return (
-    <Suspense fallback={<PageLoadingFallback />}>
-      <HomePageContent />
-    </Suspense>
-  );
-}
-
-function HomePageContent() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const { confirm, ConfirmDialog } = useConfirm();
   const { loading: authLoading } = useAuth();
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
-  const [sessions, setSessions] = useState<PlanningSession[]>([]);
   const [roundtables, setRoundtables] = useState<RoundtableSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [quickInput, setQuickInput] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
   const [starting, setStarting] = useState(false);
-  const [mode, setMode] = useState<"planning" | "roundtable">("planning");
+  const [mode, setMode] = useState<"workspace" | "roundtable">("workspace");
   const [composing, setComposing] = useState(false);
   const [presetParticipants, setPresetParticipants] = useState<string[] | null>(null);
-  const contextWorkspaceId = searchParams.get("workspace_id");
-  const contextStageKey = searchParams.get("stage_key");
-  const contextIntent = searchParams.get("intent");
-  const isStageRevision = Boolean(contextWorkspaceId && contextStageKey && contextIntent === "revision");
 
   useEffect(() => {
     Promise.all([
       fetch("/api/workspaces").then((r) => r.json()).catch(() => []),
-      fetch("/api/planning-sessions").then((r) => r.json()),
       fetch("/api/roundtable-sessions").then((r) => r.json()).catch(() => []),
     ])
-      .then(([wData, sData, rData]) => { setWorkspaces(wData); setSessions(sData); setRoundtables(rData); setLoading(false); })
+      .then(([wData, rData]) => { setWorkspaces(wData); setRoundtables(rData); setLoading(false); })
       .catch(() => setLoading(false));
   }, []);
 
@@ -151,20 +122,6 @@ function HomePageContent() {
     if (!quickInput.trim() || starting) return;
     setStarting(true); setErrorMsg("");
     try {
-      if (isStageRevision && contextWorkspaceId && contextStageKey) {
-        const res = await fetch(`/api/workspaces/${contextWorkspaceId}/stages/${contextStageKey}/request-revision`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ feedback: quickInput.trim() }),
-        });
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          throw new Error(data.detail || "提交修改意见失败");
-        }
-        router.push(`/workspaces/${contextWorkspaceId}`);
-        return;
-      }
-
       if (mode === "roundtable") {
         const res = await fetch("/api/roundtable-sessions", {
           method: "POST", headers: { "Content-Type": "application/json" },
@@ -193,31 +150,11 @@ function HomePageContent() {
           throw new Error(data.detail || "创建工作区失败");
         }
         const workspace = await workspaceRes.json();
-        const res = await fetch("/api/planning-sessions", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            workspace_id: workspace.id,
-            title: quickInput.trim().slice(0, 50),
-            input_text: quickInput.trim(),
-            mode: "workspace_planning",
-          }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          await fetch(`/api/planning-sessions/${data.id}/messages`, {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ content: quickInput.trim(), sender: "user" }),
-          });
-          router.push(`/workspaces/${workspace.id}`);
-        } else { setErrorMsg("创建会话失败，请检查后端服务"); }
+        router.push(`/workspaces/${workspace.id}`);
       }
     } catch (err: any) { setErrorMsg(err.message || "无法连接后端服务"); } finally { setStarting(false); }
   };
 
-  const handleDeleteSession = async (id: string) => {
-    if (!await confirm({ description: "确定删除此会话？", variant: "destructive" })) return;
-    try { await fetch(`/api/planning-sessions/${id}`, { method: "DELETE" }); setSessions((p) => p.filter((s) => s.id !== id)); } catch {}
-  };
   const handleDeleteRoundtable = async (id: string) => {
     if (!await confirm({ description: "确定删除此圆桌讨论？", variant: "destructive" })) return;
     try { await fetch(`/api/roundtable-sessions/${id}`, { method: "DELETE" }); setRoundtables((p) => p.filter((r) => r.id !== id)); } catch {}
@@ -234,7 +171,6 @@ function HomePageContent() {
     return `${days} 天前`;
   };
 
-  const recentS = sessions.slice(0, LIMIT);
   const recentR = roundtables.slice(0, LIMIT);
 
   if (authLoading) {
@@ -258,12 +194,10 @@ function HomePageContent() {
             <div className="relative">
               <div className="text-center mb-6">
                 <h1 className="text-3xl font-bold tracking-tight sm:text-4xl text-slate-900 dark:text-slate-100">
-                  {isStageRevision ? "输入修改意见" : "输入目标"}，<span className="bg-gradient-to-r from-indigo-500 to-violet-500 bg-clip-text text-transparent">{isStageRevision ? "推进工作流" : "启动工作流"}</span>
+                  输入目标，<span className="bg-gradient-to-r from-indigo-500 to-violet-500 bg-clip-text text-transparent">创建工作区</span>
                 </h1>
                 <p className="mx-auto mt-2 max-w-lg text-sm text-slate-500 dark:text-slate-400">
-                  {isStageRevision
-                    ? "这条意见会回到对应工作区阶段，AI 团队会基于它继续调整。"
-                    : "首页是唯一指令入口。描述你想做的网站、小程序或改动，系统会创建工作区并启动任务规划。"}
+                  首页负责新需求入口。描述你想做的网站、小程序或改动，之后在工作区里一步步确认需求、产品、UI、技术方案和开发计划。
                 </p>
               </div>
 
@@ -273,38 +207,25 @@ function HomePageContent() {
                   {/* Mode tabs + action */}
                   <div className="flex items-center justify-between px-4 pt-3 pb-3">
                     <div className="flex gap-1">
-                      {isStageRevision ? (
-                        <div className="flex items-center gap-1.5 rounded-lg bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
-                          <RefreshCcw size={12} />阶段修改
-                        </div>
-                      ) : (
-                        <>
-                          <button
-                            onClick={() => { setMode("planning"); setErrorMsg(""); setPresetParticipants(null); }}
-                            className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all cursor-pointer ${mode === "planning" ? "bg-indigo-50 dark:bg-indigo-500/15 text-indigo-600 dark:text-indigo-300" : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"}`}
-                          >
-                            <Sparkles size={12} />项目工作流
-                          </button>
-                          <button
-                            onClick={() => { setMode("roundtable"); setErrorMsg(""); setPresetParticipants(null); }}
-                            className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all cursor-pointer ${mode === "roundtable" ? "bg-emerald-50 dark:bg-emerald-500/15 text-emerald-600 dark:text-emerald-300" : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"}`}
-                          >
-                            <UsersRound size={12} />圆桌讨论
-                          </button>
-                        </>
-                      )}
+                      <button
+                        onClick={() => { setMode("workspace"); setErrorMsg(""); setPresetParticipants(null); }}
+                        className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all cursor-pointer ${mode === "workspace" ? "bg-indigo-50 dark:bg-indigo-500/15 text-indigo-600 dark:text-indigo-300" : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"}`}
+                      >
+                        <Sparkles size={12} />项目工作区
+                      </button>
+                      <button
+                        onClick={() => { setMode("roundtable"); setErrorMsg(""); setPresetParticipants(null); }}
+                        className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all cursor-pointer ${mode === "roundtable" ? "bg-emerald-50 dark:bg-emerald-500/15 text-emerald-600 dark:text-emerald-300" : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"}`}
+                      >
+                        <UsersRound size={12} />圆桌讨论
+                      </button>
                     </div>
-                    <div className={`flex items-center gap-1.5 text-xs font-medium ${isStageRevision ? "text-amber-600 dark:text-amber-300" : mode === "planning" ? "text-indigo-500" : "text-emerald-500"}`}>
-                      {isStageRevision ? <RefreshCcw size={12} /> : mode === "planning" ? <Sparkles size={12} /> : <UsersRound size={12} />}
-                      {isStageRevision ? "回写当前阶段" : mode === "planning" ? "创建工作区 + 任务规划" : "多人讨论"}
+                    <div className={`flex items-center gap-1.5 text-xs font-medium ${mode === "workspace" ? "text-indigo-500" : "text-emerald-500"}`}>
+                      {mode === "workspace" ? <Sparkles size={12} /> : <UsersRound size={12} />}
+                      {mode === "workspace" ? "创建项目并进入阶段确认" : "多人讨论"}
                     </div>
                   </div>
                   {/* Textarea */}
-                  {isStageRevision && (
-                    <div className="mx-4 mb-3 rounded-xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">
-                      正在修改工作区阶段：{contextStageKey}
-                    </div>
-                  )}
                   <div className="px-4 pb-2">
                     <textarea
                       value={quickInput}
@@ -312,7 +233,7 @@ function HomePageContent() {
                       onCompositionStart={() => setComposing(true)}
                       onCompositionEnd={() => setComposing(false)}
                       onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !composing && !e.nativeEvent.isComposing && quickInput.trim() && !starting) { e.preventDefault(); handleQuickStart(); } }}
-                      placeholder={isStageRevision ? "输入你希望怎么改，例如：页面更简洁一点，先不要做支付，移动端按钮再明显一点..." : mode === "planning" ? "描述你想做什么，例如：\n我想做一个宠物店预约小程序，支持服务展示、在线预约、后台处理预约..." : "输入一个有趣的话题，让 AI 们展开讨论...\n也可以点击下方的预设模式快速开始"}
+                      placeholder={mode === "workspace" ? "描述你想做什么，例如：\n我想做一个宠物店预约小程序，支持服务展示、在线预约、后台处理预约..." : "输入一个有趣的话题，让 AI 们展开讨论...\n也可以点击下方的预设模式快速开始"}
                       rows={4}
                       className="w-full resize-none bg-transparent text-sm text-slate-700 dark:text-slate-200 placeholder:text-slate-400/70 dark:placeholder:text-slate-500/70 outline-none leading-relaxed"
                     />
@@ -322,15 +243,15 @@ function HomePageContent() {
                     <span className="text-[11px] text-slate-400 dark:text-slate-500">Shift + Enter 换行</span>
                     <button
                       onClick={handleQuickStart} disabled={!quickInput.trim() || starting}
-                      className={`flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-medium text-white shadow-md transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer active:scale-[0.97] ${isStageRevision ? "bg-gradient-to-r from-amber-500 to-orange-500 shadow-amber-500/25 hover:from-amber-600 hover:to-orange-600" : mode === "planning" ? "bg-gradient-to-r from-indigo-600 to-violet-600 shadow-indigo-500/25 hover:from-indigo-700 hover:to-violet-700" : "bg-gradient-to-r from-emerald-600 to-teal-600 shadow-emerald-500/25 hover:from-emerald-700 hover:to-teal-700"}`}
+                      className={`flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-medium text-white shadow-md transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer active:scale-[0.97] ${mode === "workspace" ? "bg-gradient-to-r from-indigo-600 to-violet-600 shadow-indigo-500/25 hover:from-indigo-700 hover:to-violet-700" : "bg-gradient-to-r from-emerald-600 to-teal-600 shadow-emerald-500/25 hover:from-emerald-700 hover:to-teal-700"}`}
                     >
                       {starting ? <Loader2 size={16} className="animate-spin" /> : <Zap size={16} />}
-                      {starting ? "处理中" : isStageRevision ? "提交修改意见" : mode === "planning" ? "启动项目" : "发起讨论"}
+                      {starting ? "处理中" : mode === "workspace" ? "创建工作区" : "发起讨论"}
                     </button>
                   </div>
                 </div>
                 {/* Quick Tags / Roundtable Presets */}
-                {!isStageRevision && (mode === "planning" ? (
+                {mode === "workspace" ? (
                   <div className="mt-3 flex items-center justify-center gap-2 py-1">
                     {QUICK_TAGS.map((tag) => (
                       <button
@@ -358,7 +279,7 @@ function HomePageContent() {
                       );
                     })}
                   </div>
-                ))}
+                )}
                 {errorMsg && (
                   <div className="mt-3 flex items-center gap-2 rounded-xl border border-red-200 dark:border-red-900/30 bg-red-50/80 dark:bg-red-500/10 backdrop-blur-sm px-4 py-2.5 text-xs text-red-600 dark:text-red-400">
                     <X size={12} /><span>{errorMsg}</span>
@@ -420,61 +341,7 @@ function HomePageContent() {
                 )}
               </section>
 
-              <section className="grid gap-6 lg:grid-cols-2">
-              {/* Planning Sessions */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between px-1">
-                  <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
-                    <div className="flex size-5 items-center justify-center rounded-md bg-indigo-100 dark:bg-indigo-500/15">
-                      <Sparkles size={11} className="text-indigo-600 dark:text-indigo-400" />
-                    </div>
-                    最近规划工作流
-                  </h2>
-                  <Link href="/sessions" className="flex items-center gap-0.5 text-xs text-slate-400 dark:text-slate-500 hover:text-indigo-500 dark:hover:text-indigo-400 transition-colors duration-200 cursor-pointer">
-                    查看全部 <ChevronRight size={12} />
-                  </Link>
-                </div>
-                {recentS.length === 0 ? (
-                  <div className="flex items-center gap-3 rounded-xl bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm ring-1 ring-slate-200/60 dark:ring-slate-700/40 px-4 py-3.5">
-                    <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-300 dark:text-slate-600">
-                      <Sparkles size={15} strokeWidth={1.5} />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[13px] font-medium text-slate-400 dark:text-slate-500">还没有规划工作流</div>
-                      <div className="text-[11px] text-slate-300 dark:text-slate-600 mt-1">在上方输入目标即可开始</div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {recentS.map((s) => {
-                      const st = STATUS[s.status] || { label: s.status, color: "#9ca3af", bg: "rgba(99,102,241,0.06)" };
-                      return (
-                        <Link key={s.id} href={`/sessions/${s.id}`} className="group flex items-center gap-3 rounded-xl bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm ring-1 ring-slate-200/60 dark:ring-slate-700/40 px-4 py-3.5 transition-all duration-200 hover:ring-indigo-300/80 dark:hover:ring-indigo-500/30 hover:bg-indigo-50/50 dark:hover:bg-indigo-950/30 hover:shadow-sm hover:shadow-indigo-500/5 cursor-pointer">
-                          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg transition-colors duration-200" style={{ background: st.bg, color: st.color as string }}>
-                            {s.status === "completed" ? <CheckCircle2 size={15} /> : s.status === "failed" ? <AlertCircle size={15} /> : <Diamond size={15} />}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="text-[13px] font-medium text-slate-800 dark:text-slate-100 truncate group-hover:text-indigo-700 dark:group-hover:text-indigo-300 transition-colors duration-200">{s.title}</div>
-                            <div className="flex items-center gap-2 mt-1">
-                              <span className="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold" style={{ background: st.bg, color: st.color as string }}>{st.label}</span>
-                              <span className="text-[11px] text-slate-400 dark:text-slate-500">{fmtRelative(s.created_at)}</span>
-                            </div>
-                          </div>
-                          <button
-                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDeleteSession(s.id); }}
-                            className="flex size-7 shrink-0 items-center justify-center rounded-lg text-slate-300 dark:text-slate-600 opacity-0 transition-all duration-200 hover:bg-red-50 dark:hover:bg-red-500/10 hover:text-red-500 group-hover:opacity-100 cursor-pointer"
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        </Link>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {/* Roundtable Sessions */}
-              <div className="space-y-3">
+              <section className="space-y-3">
                 <div className="flex items-center justify-between px-1">
                   <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
                     <div className="flex size-5 items-center justify-center rounded-md bg-emerald-100 dark:bg-emerald-500/15">
@@ -523,8 +390,7 @@ function HomePageContent() {
                     })}
                   </div>
                 )}
-              </div>
-            </section>
+              </section>
             </>
           )}
         </div>
