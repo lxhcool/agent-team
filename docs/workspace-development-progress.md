@@ -38,6 +38,11 @@ Each stage must support:
   - clear stale `.next` dev build cache on Electron dev startup to avoid broken vendor/static chunks
   - clean up backend/frontend child process groups when Electron exits
 - macOS frameless titlebar offset for native window controls.
+- Desktop login persistence:
+  - Electron stores the current token and user in the app user data directory
+  - desktop login survives frontend dev port changes and app restarts
+  - password input supports show/hide toggle
+  - new JWTs expire after 30 days
 - Workspace data model:
   - `workspaces`
   - `workspace_members`
@@ -97,3 +102,4 @@ Each stage must support:
 - Prototype confirmation must favor real rendered HTML/CSS over decorative generated images.
 - Concept images are useful for style exploration, but approval should be based on rendered previews and screenshots.
 - In development mode, frontend page changes hot reload through Next. Electron main/preload changes and backend process changes still require restarting the desktop app.
+- Desktop auth storage keeps only token and user profile data. It must not store raw passwords.

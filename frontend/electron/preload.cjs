@@ -1,4 +1,4 @@
-const { contextBridge } = require("electron");
+const { contextBridge, ipcRenderer } = require("electron");
 
 function markDesktopShell() {
   document.documentElement.classList.add(
@@ -16,4 +16,9 @@ if (document.readyState === "loading") {
 contextBridge.exposeInMainWorld("teamAgentDesktop", {
   platform: process.platform,
   isDesktop: true,
+  auth: {
+    get: () => ipcRenderer.invoke("desktop-auth:get"),
+    set: (auth) => ipcRenderer.invoke("desktop-auth:set", auth),
+    clear: () => ipcRenderer.invoke("desktop-auth:clear"),
+  },
 });

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
-import { Bot, Loader2, ArrowRight, Mail, Lock, User, Sparkles } from "lucide-react";
+import { Bot, Loader2, ArrowRight, Mail, Lock, User, Sparkles, Eye, EyeOff } from "lucide-react";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -12,6 +12,7 @@ export default function LoginPage() {
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [displayName, setDisplayName] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -132,14 +133,23 @@ export default function LoginPage() {
               <div className="relative">
                 <Lock size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#9ca3af]" />
                 <input
-                  type="password"
+                  type={showPassword ? "text" : "password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder={mode === "login" ? "输入密码" : "至少 6 位"}
                   required
                   minLength={6}
-                  className="w-full rounded-lg border border-[#e5e7eb] bg-[#f9fafb] py-2.5 pl-10 pr-4 text-sm outline-none transition focus:border-[#6366f1] focus:bg-white focus:ring-2 focus:ring-indigo-100"
+                  className="w-full rounded-lg border border-[#e5e7eb] bg-[#f9fafb] py-2.5 pl-10 pr-10 text-sm outline-none transition focus:border-[#6366f1] focus:bg-white focus:ring-2 focus:ring-indigo-100"
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((value) => !value)}
+                  aria-label={showPassword ? "隐藏密码" : "显示密码"}
+                  title={showPassword ? "隐藏密码" : "显示密码"}
+                  className="absolute right-3 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center rounded-md text-[#9ca3af] transition hover:bg-[#eef2ff] hover:text-[#6366f1]"
+                >
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
               </div>
             </div>
 

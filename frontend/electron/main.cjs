@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
 const { spawn } = require("child_process");
 const fs = require("fs");
 const http = require("http");
@@ -16,8 +16,56 @@ const appIconPath = path.join(frontendDir, "electron", "assets", "icon.png");
 const childProcesses = new Set();
 let mainWindow = null;
 
+if (!isPackaged) {
+  app.setPath("userData", path.join(app.getPath("appData"), "Team Agent Dev"));
+}
+
 function log(message) {
   console.log(`[desktop] ${message}`);
+}
+
+function getDesktopAuthPath() {
+  return path.join(app.getPath("userData"), "auth.json");
+}
+
+function readDesktopAuth() {
+  try {
+    const authPath = getDesktopAuthPath();
+    if (!fs.existsSync(authPath)) {
+      return null;
+    }
+    return JSON.parse(fs.readFileSync(authPath, "utf8"));
+  } catch (error) {
+    log(`failed to read desktop auth: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
+}
+
+function writeDesktopAuth(auth) {
+  const authPath = getDesktopAuthPath();
+  fs.mkdirSync(path.dirname(authPath), { recursive: true });
+  fs.writeFileSync(authPath, JSON.stringify(auth || {}, null, 2), { mode: 0o600 });
+  fs.chmodSync(authPath, 0o600);
+}
+
+function clearDesktopAuth() {
+  try {
+    fs.rmSync(getDesktopAuthPath(), { force: true });
+  } catch (error) {
+    log(`failed to clear desktop auth: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function registerDesktopAuthHandlers() {
+  ipcMain.handle("desktop-auth:get", () => readDesktopAuth());
+  ipcMain.handle("desktop-auth:set", (_event, auth) => {
+    writeDesktopAuth(auth);
+    return true;
+  });
+  ipcMain.handle("desktop-auth:clear", () => {
+    clearDesktopAuth();
+    return true;
+  });
 }
 
 function createWindow() {
@@ -440,6 +488,7 @@ async function bootstrap() {
 }
 
 app.whenReady().then(() => {
+  registerDesktopAuthHandlers();
   if (process.platform === "darwin" && app.dock && fs.existsSync(appIconPath)) {
     app.dock.setIcon(appIconPath);
   }

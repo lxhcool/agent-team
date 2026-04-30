@@ -18,7 +18,7 @@ from app.models.models import User
 # JWT config
 JWT_SECRET = settings.encryption_key  # Reuse encryption key as JWT secret
 JWT_ALGORITHM = "HS256"
-JWT_EXPIRE_HOURS = 72  # 3 days
+JWT_EXPIRE_HOURS = 24 * 30  # 30 days
 
 # Password hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")

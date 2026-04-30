@@ -26,8 +26,34 @@ const AuthContext = createContext<AuthContextType | null>(null);
 const TOKEN_KEY = "agent_team_token";
 const USER_KEY = "agent_team_user";
 
+declare global {
+  interface Window {
+    teamAgentDesktop?: {
+      isDesktop?: boolean;
+      platform?: string;
+      auth?: {
+        get: () => Promise<{ token?: string; user?: User } | null>;
+        set: (auth: { token: string; user: User }) => Promise<boolean>;
+        clear: () => Promise<boolean>;
+      };
+    };
+  }
+}
+
 // Paths that don't require authentication
 const PUBLIC_PATHS = ["/login", "/register"];
+
+async function saveDesktopAuth(auth: { token: string; user: User }) {
+  try {
+    await window.teamAgentDesktop?.auth?.set(auth);
+  } catch {
+    // Desktop auth persistence should never block a successful web login.
+  }
+}
+
+function clearDesktopAuth() {
+  window.teamAgentDesktop?.auth?.clear().catch(() => undefined);
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -38,26 +64,50 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Load auth state from localStorage on mount
   useEffect(() => {
-    const savedToken = localStorage.getItem(TOKEN_KEY);
-    const savedUser = localStorage.getItem(USER_KEY);
-    if (savedToken && savedUser) {
+    let cancelled = false;
+
+    const loadAuth = async () => {
+      const savedToken = localStorage.getItem(TOKEN_KEY);
+      const savedUser = localStorage.getItem(USER_KEY);
       try {
-        setToken(savedToken);
-        setUser(JSON.parse(savedUser));
+        if (savedToken && savedUser) {
+          setToken(savedToken);
+          setUser(JSON.parse(savedUser));
+          return;
+        }
+
+        const desktopAuth = await window.teamAgentDesktop?.auth?.get();
+        if (desktopAuth?.token && desktopAuth.user && !cancelled) {
+          localStorage.setItem(TOKEN_KEY, desktopAuth.token);
+          localStorage.setItem(USER_KEY, JSON.stringify(desktopAuth.user));
+          setToken(desktopAuth.token);
+          setUser(desktopAuth.user);
+        }
       } catch {
         localStorage.removeItem(TOKEN_KEY);
         localStorage.removeItem(USER_KEY);
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
-    }
-    setLoading(false);
+    };
+
+    loadAuth();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  // Route guard: redirect to login if not authenticated
+  // Route guard: redirect to login if not authenticated, or leave login when already authenticated.
   useEffect(() => {
     if (loading) return;
     const isPublic = PUBLIC_PATHS.some((p) => pathname.startsWith(p));
     if (!token && !isPublic) {
       router.replace("/login");
+    } else if (token && isPublic) {
+      router.replace("/");
     }
   }, [token, loading, pathname, router]);
 
@@ -76,6 +126,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(data.user);
     localStorage.setItem(TOKEN_KEY, data.access_token);
     localStorage.setItem(USER_KEY, JSON.stringify(data.user));
+    await saveDesktopAuth({ token: data.access_token, user: data.user });
   }, []);
 
   const register = useCallback(async (username: string, email: string, password: string, display_name?: string) => {
@@ -93,6 +144,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(data.user);
     localStorage.setItem(TOKEN_KEY, data.access_token);
     localStorage.setItem(USER_KEY, JSON.stringify(data.user));
+    await saveDesktopAuth({ token: data.access_token, user: data.user });
   }, []);
 
   const logout = useCallback(() => {
@@ -100,6 +152,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
+    clearDesktopAuth();
     router.replace("/login");
   }, [router]);
 
