@@ -43,6 +43,8 @@ async def _migrate_schema():
             ("ALTER TABLE provider_configs ADD COLUMN user_id VARCHAR(36) DEFAULT 'system'", "provider_configs", "user_id"),
             # ModelSettings: add user_id column
             ("ALTER TABLE model_settings ADD COLUMN user_id VARCHAR(36) DEFAULT 'system'", "model_settings", "user_id"),
+            # PlanningSession: bind planning workflows to product workspaces
+            ("ALTER TABLE planning_sessions ADD COLUMN workspace_id VARCHAR(36)", "planning_sessions", "workspace_id"),
         ]
 
         for sql, table, column in migrations:

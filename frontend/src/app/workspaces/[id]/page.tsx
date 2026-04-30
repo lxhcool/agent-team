@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
@@ -80,6 +80,18 @@ type WorkspaceStage = {
   approved_at: string | null;
 };
 
+type PlanningWorkflow = {
+  id: string;
+  workspace_id: string;
+  title: string;
+  status: string;
+  mode: string;
+  input_text: string;
+  summary: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
 type Workspace = {
   id: string;
   name: string;
@@ -89,6 +101,7 @@ type Workspace = {
   stage_total: number;
   stage_approved: number;
   stages: WorkspaceStage[];
+  planning_sessions?: PlanningWorkflow[];
 };
 
 const STAGE_ICON: Record<StageKey, React.ComponentType<{ size?: number; className?: string }>> = {
@@ -118,6 +131,19 @@ const STATUS_CLASS: Record<StageStatus, string> = {
   skipped: "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400",
 };
 
+const WORKFLOW_STATUS_LABEL: Record<string, string> = {
+  created: "待开始",
+  planning: "规划中",
+  analyzing: "分析中",
+  generating_proposal: "生成方案",
+  awaiting_approval: "待确认方案",
+  generating_plan: "生成计划",
+  ready_for_export: "可导出",
+  completed: "已完成",
+  cancelled: "已取消",
+  failed: "失败",
+};
+
 function formatDate(value: string | null) {
   if (!value) return "";
   return new Intl.DateTimeFormat("zh-CN", {
@@ -141,7 +167,6 @@ export default function WorkspaceDetailPage() {
   const workspaceId = params.id;
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [selectedKey, setSelectedKey] = useState<StageKey | null>(null);
-  const [feedback, setFeedback] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -177,10 +202,6 @@ export default function WorkspaceDetailPage() {
     return workspace.stages.find((stage) => stage.stage_key === selectedKey) || workspace.stages[0];
   }, [selectedKey, workspace]);
 
-  useEffect(() => {
-    setFeedback(selectedStage?.user_feedback || "");
-  }, [selectedStage?.id, selectedStage?.user_feedback]);
-
   const approveStage = async () => {
     if (!selectedStage || saving) return;
     setSaving(true);
@@ -204,32 +225,6 @@ export default function WorkspaceDetailPage() {
     }
   };
 
-  const requestRevision = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!selectedStage || !feedback.trim() || saving) return;
-    setSaving(true);
-    setError("");
-    try {
-      const res = await fetch(
-        `/api/workspaces/${workspaceId}/stages/${selectedStage.stage_key}/request-revision`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ feedback: feedback.trim() }),
-        }
-      );
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.detail || "提交反馈失败");
-      }
-      await loadWorkspace();
-    } catch (err: any) {
-      setError(err.message || "提交反馈失败");
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const generateStage = async () => {
     if (!selectedStage || generating) return;
     setGenerating(true);
@@ -240,7 +235,7 @@ export default function WorkspaceDetailPage() {
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ instruction: feedback.trim() || null }),
+          body: JSON.stringify({ instruction: selectedStage.user_feedback || null }),
         }
       );
       if (!res.ok) {
@@ -256,7 +251,6 @@ export default function WorkspaceDetailPage() {
         };
       });
       setSelectedKey(stage.stage_key);
-      setFeedback(stage.user_feedback || "");
     } catch (err: any) {
       setError(err.message || "生成推荐失败");
     } finally {
@@ -365,6 +359,7 @@ export default function WorkspaceDetailPage() {
   const prototypeUrl = prototypeArtifact?.url ? withAuthToken(prototypeArtifact.url) : "";
   const desktopDesignUrl = desktopDesign?.url ? withAuthToken(desktopDesign.url) : "";
   const mobileDesignUrl = mobileDesign?.url ? withAuthToken(mobileDesign.url) : "";
+  const planningWorkflows = workspace.planning_sessions || [];
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
@@ -405,6 +400,49 @@ export default function WorkspaceDetailPage() {
               </div>
             </div>
           </div>
+        </section>
+
+        <section className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">工作流</div>
+              <div className="text-xs text-slate-400">这个项目下的任务规划、设计、开发和部署流程会沉淀在这里</div>
+            </div>
+            <Link
+              href="/"
+              className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-medium text-slate-600 transition hover:border-indigo-200 hover:text-indigo-600 dark:border-slate-700 dark:text-slate-300"
+            >
+              回首页输入新指令
+            </Link>
+          </div>
+          {planningWorkflows.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-slate-200 p-4 text-sm text-slate-400 dark:border-slate-800">
+              还没有绑定任务规划工作流。后续从首页输入目标时会自动创建并关联到工作区。
+            </div>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-2">
+              {planningWorkflows.map((workflow) => (
+                <Link
+                  key={workflow.id}
+                  href={`/sessions/${workflow.id}`}
+                  className="rounded-xl border border-slate-200 bg-slate-50 p-4 transition hover:border-indigo-200 hover:bg-indigo-50/50 dark:border-slate-800 dark:bg-slate-950/60 dark:hover:border-indigo-500/30 dark:hover:bg-indigo-500/10"
+                >
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <FileText size={15} className="shrink-0 text-indigo-500" />
+                      <span className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{workflow.title}</span>
+                    </div>
+                    <span className="shrink-0 rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-600 dark:bg-indigo-500/15 dark:text-indigo-300">
+                      {WORKFLOW_STATUS_LABEL[workflow.status] || workflow.status}
+                    </span>
+                  </div>
+                  <p className="line-clamp-2 text-xs leading-5 text-slate-500 dark:text-slate-400">
+                    {workflow.summary || workflow.input_text}
+                  </p>
+                </Link>
+              ))}
+            </div>
+          )}
         </section>
 
         {error && (
@@ -647,32 +685,27 @@ export default function WorkspaceDetailPage() {
               </div>
             </div>
 
-            <form onSubmit={requestRevision} className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-800 dark:bg-slate-950/60">
-              <label className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+            <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-800 dark:bg-slate-950/60">
+              <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
                 <RefreshCcw size={16} className="text-amber-500" />
                 需要调整
-              </label>
-              <textarea
-                value={feedback}
-                onChange={(event) => setFeedback(event.target.value)}
-                rows={4}
-                placeholder="告诉 AI 团队你希望怎么改，例如：风格更年轻一点、页面少一点、先不要做支付。"
-                className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-indigo-500/20"
-              />
+              </div>
+              <div className="rounded-xl bg-white p-4 text-sm leading-6 text-slate-500 dark:bg-slate-900 dark:text-slate-300">
+                所有自然语言输入统一回到首页。点击下面按钮后，首页输入框会带上当前工作区和阶段上下文。
+              </div>
               <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-xs text-slate-400">
-                  打回后该阶段会标记为需调整，后续生成逻辑会使用这段反馈。
+                  提交后该阶段会标记为需调整，后续生成逻辑会使用这段反馈。
                 </p>
-                <button
-                  type="submit"
-                  disabled={saving || !feedback.trim()}
+                <Link
+                  href={`/?workspace_id=${encodeURIComponent(workspaceId)}&stage_key=${encodeURIComponent(selectedStage.stage_key)}&intent=revision`}
                   className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:border-amber-200 hover:text-amber-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
                 >
-                  {saving ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-                  提交反馈
-                </button>
+                  <Send size={16} />
+                  回首页输入修改意见
+                </Link>
               </div>
-            </form>
+            </div>
           </section>
         </div>
       </main>

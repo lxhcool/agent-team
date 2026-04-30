@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import get_current_user
 from app.core.database import get_db
 from app.api.authz import get_owned_planning_session
-from app.models.models import PlanningSession, PlanningStatus, User
+from app.models.models import PlanningSession, PlanningStatus, User, WorkspaceMember
 
 router = APIRouter()
 
@@ -21,10 +21,12 @@ class CreatePlanningRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=255)
     input_text: str = Field(..., min_length=1)
     mode: str = Field(default="planning")
+    workspace_id: Optional[str] = None
 
 
 class PlanningSessionResponse(BaseModel):
     id: str
+    workspace_id: Optional[str] = None
     title: str
     user_id: str
     status: PlanningStatus
@@ -41,6 +43,7 @@ class PlanningSessionResponse(BaseModel):
     def from_orm(cls, obj):
         return cls(
             id=obj.id,
+            workspace_id=obj.workspace_id,
             title=obj.title,
             user_id=obj.user_id,
             status=obj.status,
@@ -61,7 +64,18 @@ async def create_planning_session(
     user: User = Depends(get_current_user),
 ):
     """Create a new Planning Session with user requirement."""
+    if req.workspace_id:
+        member_result = await db.execute(
+            select(WorkspaceMember).where(
+                WorkspaceMember.workspace_id == req.workspace_id,
+                WorkspaceMember.user_id == user.id,
+            )
+        )
+        if not member_result.scalars().first():
+            raise HTTPException(status_code=404, detail="Workspace not found")
+
     session = PlanningSession(
+        workspace_id=req.workspace_id,
         title=req.title,
         user_id=user.id,
         input_text=req.input_text,

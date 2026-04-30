@@ -21,6 +21,8 @@ from app.api.authz import get_user_from_query_token
 from app.models.models import (
     Artifact,
     ModelSettings,
+    PlanningSession,
+    PlanningStatus,
     ProviderConfig,
     User,
     Workspace,
@@ -189,6 +191,32 @@ class WorkspaceStageResponse(BaseModel):
         )
 
 
+class WorkspacePlanningSessionResponse(BaseModel):
+    id: str
+    workspace_id: str
+    title: str
+    status: PlanningStatus
+    mode: str
+    input_text: str
+    summary: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+    @classmethod
+    def from_model(cls, session: PlanningSession):
+        return cls(
+            id=session.id,
+            workspace_id=session.workspace_id or "",
+            title=session.title,
+            status=session.status,
+            mode=session.mode,
+            input_text=session.input_text,
+            summary=session.summary,
+            created_at=session.created_at.isoformat() if session.created_at else None,
+            updated_at=session.updated_at.isoformat() if session.updated_at else None,
+        )
+
+
 class WorkspaceResponse(BaseModel):
     id: str
     owner_id: str
@@ -204,6 +232,7 @@ class WorkspaceResponse(BaseModel):
     stage_total: int = 0
     stage_approved: int = 0
     stages: Optional[List[WorkspaceStageResponse]] = None
+    planning_sessions: Optional[List[WorkspacePlanningSessionResponse]] = None
 
     @classmethod
     def from_model(
@@ -211,8 +240,14 @@ class WorkspaceResponse(BaseModel):
         workspace: Workspace,
         role: Optional[WorkspaceMemberRole] = None,
         stages: Optional[List[WorkspaceStage]] = None,
+        planning_sessions: Optional[List[PlanningSession]] = None,
     ):
         stage_responses = [WorkspaceStageResponse.from_model(s) for s in stages] if stages is not None else None
+        planning_responses = (
+            [WorkspacePlanningSessionResponse.from_model(s) for s in planning_sessions]
+            if planning_sessions is not None
+            else None
+        )
         approved = len([s for s in stages or [] if s.status == WorkspaceStageStatus.APPROVED])
         return cls(
             id=workspace.id,
@@ -229,6 +264,7 @@ class WorkspaceResponse(BaseModel):
             stage_total=len(stages or []),
             stage_approved=approved,
             stages=stage_responses,
+            planning_sessions=planning_responses,
         )
 
 
@@ -1129,7 +1165,13 @@ async def get_workspace(
 ):
     workspace, member = await _get_accessible_workspace(db, workspace_id, user)
     stages = await _get_stages(db, workspace.id)
-    return WorkspaceResponse.from_model(workspace, member.role, stages)
+    planning_result = await db.execute(
+        select(PlanningSession)
+        .where(PlanningSession.workspace_id == workspace.id)
+        .order_by(PlanningSession.created_at.desc())
+    )
+    planning_sessions = planning_result.scalars().all()
+    return WorkspaceResponse.from_model(workspace, member.role, stages, planning_sessions)
 
 
 @router.patch("/workspaces/{workspace_id}", response_model=WorkspaceResponse)

@@ -215,6 +215,7 @@ class Workspace(Base):
     stages: Mapped[List["WorkspaceStage"]] = relationship(
         back_populates="workspace", cascade="all, delete-orphan", order_by="WorkspaceStage.order"
     )
+    planning_sessions: Mapped[List["PlanningSession"]] = relationship(back_populates="workspace")
 
 
 class WorkspaceMember(Base):
@@ -266,6 +267,9 @@ class PlanningSession(Base):
     __tablename__ = "planning_sessions"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    workspace_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("workspaces.id"), nullable=True, index=True
+    )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     status: Mapped[PlanningStatus] = mapped_column(
@@ -277,6 +281,7 @@ class PlanningSession(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
 
+    workspace: Mapped[Optional["Workspace"]] = relationship(back_populates="planning_sessions")
     tasks: Mapped[List["Task"]] = relationship(back_populates="planning_session", foreign_keys="[Task.session_id]", primaryjoin="PlanningSession.id == Task.session_id")
     messages: Mapped[List["Message"]] = relationship(back_populates="planning_session", foreign_keys="[Message.session_id]", primaryjoin="PlanningSession.id == Message.session_id")
     artifacts: Mapped[List["Artifact"]] = relationship(back_populates="planning_session", foreign_keys="[Artifact.session_id]", primaryjoin="PlanningSession.id == Artifact.session_id")

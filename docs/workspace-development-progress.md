@@ -48,6 +48,10 @@ Each stage must support:
   - `/workspaces`
   - `/workspaces/[id]`
   - top navigation entry
+- Unified homepage input:
+  - planning input now creates a workspace and a workspace-bound planning workflow
+  - workspace detail shows linked planning workflows
+  - stage revision text is entered from the homepage input with workspace/stage context
 - Stage recommendation generation:
   - LLM-first generation using user model settings
   - rule-based fallback when model is unavailable or returns invalid JSON
@@ -79,7 +83,7 @@ Each stage must support:
   - file change summaries
   - rollback
 - Connect workspace stages to Planning/Execution:
-  - create planning session from workspace
+  - create planning session from workspace: first pass done through homepage input
   - write planning output back to stages
   - run development execution under workspace boundary
 
