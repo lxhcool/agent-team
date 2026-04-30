@@ -201,6 +201,9 @@ class Workspace(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     target_platform: Mapped[str] = mapped_column(String(50), default="website")
+    binding_id: Mapped[Optional[str]] = mapped_column(String(80), nullable=True, index=True)
+    storage_mode: Mapped[str] = mapped_column(String(30), default="server")
+    root_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[WorkspaceStatus] = mapped_column(Enum(WorkspaceStatus), default=WorkspaceStatus.ACTIVE)
     current_stage: Mapped[WorkspaceStageKey] = mapped_column(
         Enum(WorkspaceStageKey), default=WorkspaceStageKey.REQUIREMENTS

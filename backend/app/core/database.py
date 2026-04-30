@@ -45,6 +45,12 @@ async def _migrate_schema():
             ("ALTER TABLE model_settings ADD COLUMN user_id VARCHAR(36) DEFAULT 'system'", "model_settings", "user_id"),
             # PlanningSession: bind planning workflows to product workspaces
             ("ALTER TABLE planning_sessions ADD COLUMN workspace_id VARCHAR(36)", "planning_sessions", "workspace_id"),
+            # Workspace: storage mode for local/server managed directories
+            ("ALTER TABLE workspaces ADD COLUMN storage_mode VARCHAR(30) DEFAULT 'server'", "workspaces", "storage_mode"),
+            # Workspace: user-selected local root path
+            ("ALTER TABLE workspaces ADD COLUMN root_path TEXT", "workspaces", "root_path"),
+            # Workspace: durable local-directory binding identity
+            ("ALTER TABLE workspaces ADD COLUMN binding_id VARCHAR(80)", "workspaces", "binding_id"),
         ]
 
         for sql, table, column in migrations:

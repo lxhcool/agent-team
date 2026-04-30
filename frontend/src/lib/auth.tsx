@@ -36,6 +36,9 @@ declare global {
         set: (auth: { token: string; user: User }) => Promise<boolean>;
         clear: () => Promise<boolean>;
       };
+      workspace?: {
+        chooseDirectory?: () => Promise<{ path?: string } | null>;
+      };
     };
   }
 }

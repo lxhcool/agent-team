@@ -16,9 +16,11 @@ import {
   Loader2,
   MessageSquare,
   Palette,
+  PauseCircle,
   RefreshCcw,
   Rocket,
   Send,
+  ShieldCheck,
   Sparkles,
   Wand2,
 } from "lucide-react";
@@ -49,8 +51,10 @@ type Recommendation = {
   options?: {
     title: string;
     description: string;
+    content?: string;
     recommended?: boolean;
   }[];
+  selected_option?: string | null;
   artifacts?: {
     type?: string;
     status?: string;
@@ -63,6 +67,17 @@ type Recommendation = {
   source?: string;
   model?: string;
   provider?: string;
+  agent_name?: string;
+  execution_session_id?: string;
+  project_path?: string;
+  checkpoint_id?: string;
+  task_items?: {
+    id: string;
+    title: string;
+    status: string;
+    assigned_agent?: string;
+    result_summary?: string;
+  }[];
   feedback_used?: string;
 };
 
@@ -85,6 +100,12 @@ type Workspace = {
   name: string;
   description: string | null;
   target_platform: string;
+  binding_id: string | null;
+  storage_mode: "server" | "local";
+  root_path: string | null;
+  local_directory_exists?: boolean | null;
+  local_manifest_exists?: boolean | null;
+  binding_state?: "healthy" | "missing_directory" | "missing_manifest" | "server_managed" | null;
   current_stage: StageKey;
   stage_total: number;
   stage_approved: number;
@@ -118,6 +139,51 @@ const STATUS_CLASS: Record<StageStatus, string> = {
   skipped: "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400",
 };
 
+const AUTO_STOP_STAGES = new Set<StageKey>(["prototype", "acceptance", "deployment"]);
+
+const STAGE_AGENT_META: Record<StageKey, { name: string; label: string; skills: string[] }> = {
+  requirements: {
+    name: "requirements-analyst",
+    label: "Requirements Analyst",
+    skills: ["需求澄清", "MVP 范围控制", "用户表达器"],
+  },
+  product: {
+    name: "product-designer",
+    label: "Product Designer",
+    skills: ["产品流程设计", "决策呈现器", "用户表达器"],
+  },
+  ui_direction: {
+    name: "ui-ux-designer",
+    label: "UI/UX Designer",
+    skills: ["界面方向设计", "原型结构构建", "用户表达器"],
+  },
+  prototype: {
+    name: "ui-ux-designer",
+    label: "UI/UX Designer",
+    skills: ["界面方向设计", "原型结构构建", "用户表达器"],
+  },
+  technical: {
+    name: "technical-architect",
+    label: "Technical Architect",
+    skills: ["技术方案设计", "上下文摘要器"],
+  },
+  development: {
+    name: "implementation-engineer",
+    label: "Implementation Engineer",
+    skills: ["实现执行", "上下文摘要器"],
+  },
+  acceptance: {
+    name: "qa-reviewer",
+    label: "QA Reviewer",
+    skills: ["验收检查", "决策呈现器"],
+  },
+  deployment: {
+    name: "release-operator",
+    label: "Release Operator",
+    skills: ["发布安全检查", "上下文摘要器"],
+  },
+};
+
 function formatDate(value: string | null) {
   if (!value) return "";
   return new Intl.DateTimeFormat("zh-CN", {
@@ -141,13 +207,21 @@ export default function WorkspaceDetailPage() {
   const workspaceId = params.id;
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [selectedKey, setSelectedKey] = useState<StageKey | null>(null);
+  const [selectedOptionTitle, setSelectedOptionTitle] = useState<string | null>(null);
   const [feedback, setFeedback] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [selectingOption, setSelectingOption] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [generatingPrototype, setGeneratingPrototype] = useState(false);
   const [generatingDesigns, setGeneratingDesigns] = useState(false);
+  const [autoFollowAI, setAutoFollowAI] = useState(false);
+  const [autoStatus, setAutoStatus] = useState("");
   const [error, setError] = useState("");
+  const [importNotice, setImportNotice] = useState("");
+  const [isDesktop, setIsDesktop] = useState(false);
+  const [rebinding, setRebinding] = useState(false);
+  const [rebindPath, setRebindPath] = useState("");
 
   const loadWorkspace = async () => {
     setLoading(true);
@@ -172,22 +246,125 @@ export default function WorkspaceDetailPage() {
     loadWorkspace();
   }, [workspaceId]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const notice = window.sessionStorage.getItem(`workspace_import_notice_${workspaceId}`);
+    if (!notice) return;
+    setImportNotice(notice);
+    window.sessionStorage.removeItem(`workspace_import_notice_${workspaceId}`);
+  }, [workspaceId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setIsDesktop(Boolean(window.teamAgentDesktop?.isDesktop));
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const stored = window.localStorage.getItem(`workspace_auto_follow_ai_${workspaceId}`);
+    setAutoFollowAI(stored === "true");
+  }, [workspaceId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(`workspace_auto_follow_ai_${workspaceId}`, autoFollowAI ? "true" : "false");
+  }, [autoFollowAI, workspaceId]);
+
   const selectedStage = useMemo(() => {
     if (!workspace?.stages?.length) return null;
     return workspace.stages.find((stage) => stage.stage_key === selectedKey) || workspace.stages[0];
   }, [selectedKey, workspace]);
 
+  const currentStage = useMemo(() => {
+    if (!workspace?.stages?.length) return null;
+    return workspace.stages.find((stage) => stage.stage_key === workspace.current_stage) || workspace.stages[0];
+  }, [workspace]);
+  const currentStageBlocksAuto = currentStage ? AUTO_STOP_STAGES.has(currentStage.stage_key) : false;
+
   useEffect(() => {
     setFeedback(selectedStage?.user_feedback || "");
   }, [selectedStage?.id, selectedStage?.user_feedback]);
 
-  const approveStage = async () => {
-    if (!selectedStage || saving) return;
+  useEffect(() => {
+    setRebindPath(workspace?.root_path || "");
+  }, [workspace?.root_path]);
+
+  useEffect(() => {
+    const stageOptions = selectedStage?.recommendation?.options || [];
+    if (!stageOptions.length) {
+      setSelectedOptionTitle(null);
+      return;
+    }
+    setSelectedOptionTitle((current) => {
+      const persisted = selectedStage?.recommendation?.selected_option;
+      if (persisted && stageOptions.some((option) => option.title === persisted)) return persisted;
+      if (current && stageOptions.some((option) => option.title === current)) return current;
+      return stageOptions.find((option) => option.recommended)?.title || stageOptions[0].title;
+    });
+  }, [selectedStage?.id, selectedStage?.recommendation?.options, selectedStage?.recommendation?.selected_option]);
+
+  const selectStageOption = async (stage: WorkspaceStage, optionTitle: string) => {
+    if (!stage.recommendation || selectingOption) return;
+    const nextOption = (stage.recommendation.options || []).find((option) => option.title === optionTitle);
+    if (!nextOption) return;
+
+    const nextRecommendation: Recommendation = {
+      ...stage.recommendation,
+      selected_option: optionTitle,
+    };
+
+    setSelectingOption(true);
+    setSelectedOptionTitle(optionTitle);
+    setWorkspace((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        stages: current.stages.map((item) => item.id === stage.id
+          ? {
+              ...item,
+              recommendation: nextRecommendation,
+              content: nextOption.content || item.content,
+            }
+          : item),
+      };
+    });
+
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/stages/${stage.stage_key}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          recommendation: nextRecommendation,
+          content: nextOption.content || stage.content,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || "切换方案失败");
+      }
+      const updatedStage = await res.json();
+      setWorkspace((current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          stages: current.stages.map((item) => item.id === updatedStage.id ? updatedStage : item),
+        };
+      });
+    } catch (err: any) {
+      setError(err.message || "切换方案失败");
+      await loadWorkspace();
+    } finally {
+      setSelectingOption(false);
+    }
+  };
+
+  const approveStage = async (stage: WorkspaceStage) => {
+    if (saving) return;
     setSaving(true);
     setError("");
     try {
       const res = await fetch(
-        `/api/workspaces/${workspaceId}/stages/${selectedStage.stage_key}/approve`,
+        `/api/workspaces/${workspaceId}/stages/${stage.stage_key}/approve`,
         { method: "POST" }
       );
       if (!res.ok) {
@@ -202,6 +379,11 @@ export default function WorkspaceDetailPage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const approveSelectedStage = async () => {
+    if (!selectedStage) return;
+    await approveStage(selectedStage);
   };
 
   const requestRevision = async (event: FormEvent) => {
@@ -230,38 +412,117 @@ export default function WorkspaceDetailPage() {
     }
   };
 
-  const generateStage = async () => {
-    if (!selectedStage || generating) return;
+  const generateStage = async (stage: WorkspaceStage) => {
+    if (generating) return;
     setGenerating(true);
     setError("");
     try {
       const res = await fetch(
-        `/api/workspaces/${workspaceId}/stages/${selectedStage.stage_key}/generate`,
+        `/api/workspaces/${workspaceId}/stages/${stage.stage_key}/generate`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ instruction: feedback.trim() || selectedStage.user_feedback || null }),
+          body: JSON.stringify({ instruction: feedback.trim() || stage.user_feedback || null }),
         }
       );
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.detail || "生成推荐失败");
       }
-      const stage = await res.json();
+      const updatedStage = await res.json();
       setWorkspace((current) => {
         if (!current) return current;
         return {
           ...current,
-          stages: current.stages.map((item) => item.id === stage.id ? stage : item),
+          stages: current.stages.map((item) => item.id === updatedStage.id ? updatedStage : item),
         };
       });
-      setSelectedKey(stage.stage_key);
+      setSelectedKey(updatedStage.stage_key);
     } catch (err: any) {
       setError(err.message || "生成推荐失败");
     } finally {
       setGenerating(false);
     }
   };
+
+  const generateSelectedStage = async () => {
+    if (!selectedStage) return;
+    await generateStage(selectedStage);
+  };
+
+  useEffect(() => {
+    if (!autoFollowAI || !workspace || !currentStage) return;
+    if (loading || generating || saving || selectingOption || generatingPrototype || generatingDesigns) return;
+
+    if (selectedKey !== currentStage.stage_key) {
+      setSelectedKey(currentStage.stage_key);
+    }
+
+    if (AUTO_STOP_STAGES.has(currentStage.stage_key)) {
+      setAutoFollowAI(false);
+      setAutoStatus(`已在「${currentStage.title}」停止自动推进，请你接管确认。`);
+      return;
+    }
+
+    const recommendation = currentStage.recommendation;
+    const hasGenerated = Boolean(recommendation?.source);
+    const options = recommendation?.options || [];
+    const selectedOption = recommendation?.selected_option || null;
+    const recommendedOption =
+      options.find((option) => option.recommended)?.title || options[0]?.title || null;
+
+    if (!hasGenerated) {
+      setAutoStatus(`正在为「${currentStage.title}」生成推荐方案...`);
+      void generateStage(currentStage);
+      return;
+    }
+
+    if (recommendedOption && selectedOption !== recommendedOption) {
+      setAutoStatus(`正在为「${currentStage.title}」选中 AI 推荐方案...`);
+      void selectStageOption(currentStage, recommendedOption);
+      return;
+    }
+
+    if (currentStage.status !== "approved") {
+      setAutoStatus(`正在确认「${currentStage.title}」并推进到下一阶段...`);
+      void approveStage(currentStage);
+      return;
+    }
+
+    setAutoStatus(`自动推进已处理到「${currentStage.title}」。`);
+  }, [
+    autoFollowAI,
+    currentStage,
+    generating,
+    generatingDesigns,
+    generatingPrototype,
+    loading,
+    saving,
+    selectingOption,
+    selectedKey,
+    workspace,
+  ]);
+
+  useEffect(() => {
+    if (!workspace || !currentStage) return;
+    if (autoFollowAI) return;
+    if (loading || generating || saving || selectingOption || generatingPrototype || generatingDesigns) return;
+    if (currentStage.status !== "awaiting_confirmation") return;
+    if (currentStage.recommendation?.source) return;
+
+    setAutoStatus(`已进入「${currentStage.title}」，正在自动生成推荐方案...`);
+    void generateStage(currentStage);
+  }, [
+    autoFollowAI,
+    currentStage,
+    generating,
+    generatingDesigns,
+    generatingPrototype,
+    loading,
+    saving,
+    selectingOption,
+    workspace,
+  ]);
 
   const generatePrototype = async () => {
     if (generatingPrototype) return;
@@ -317,6 +578,41 @@ export default function WorkspaceDetailPage() {
     }
   };
 
+  const chooseRebindDirectory = async () => {
+    try {
+      const chosen = await window.teamAgentDesktop?.workspace?.chooseDirectory?.();
+      if (chosen?.path) {
+        setRebindPath(chosen.path);
+      }
+    } catch (err: any) {
+      setError(err?.message || "选择目录失败");
+    }
+  };
+
+  const rebindDirectory = async () => {
+    if (!workspace || !rebindPath.trim() || rebinding) return;
+    setRebinding(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/workspaces/${workspace.id}/rebind-local`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ root_path: rebindPath.trim() }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || "重新绑定目录失败");
+      }
+      const data = await res.json();
+      setWorkspace(data);
+      setImportNotice("已重新绑定本地目录，当前工作区继续沿用原有阶段记录和 binding_id。");
+    } catch (err: any) {
+      setError(err.message || "重新绑定目录失败");
+    } finally {
+      setRebinding(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
@@ -351,9 +647,23 @@ export default function WorkspaceDetailPage() {
   const StageIcon = STAGE_ICON[selectedStage.stage_key];
   const focus = selectedStage.recommendation?.focus || [];
   const options = selectedStage.recommendation?.options || [];
+  const activeOption = options.find((option) => option.title === selectedOptionTitle) || null;
+  const activeContent = activeOption?.content || selectedStage.content;
+  const hasGeneratedRecommendation = Boolean(selectedStage.recommendation?.source);
   const artifacts = selectedStage.recommendation?.artifacts || [];
+  const stageAgentMeta = STAGE_AGENT_META[selectedStage.stage_key];
+  const stageTasks = selectedStage.recommendation?.task_items || [];
   const prototypeArtifact = artifacts.find((artifact) =>
     artifact.type === "prototype_html" && artifact.status === "ready" && artifact.url
+  );
+  const developmentPreviewArtifact = artifacts.find((artifact) =>
+    artifact.type === "development_preview" && artifact.status === "ready" && artifact.url
+  );
+  const developmentReportArtifact = artifacts.find((artifact) =>
+    artifact.type === "development_report" && artifact.status === "ready" && artifact.url
+  );
+  const acceptanceReportArtifact = artifacts.find((artifact) =>
+    artifact.type === "acceptance_report" && artifact.status === "ready" && artifact.url
   );
   const desktopDesign = artifacts.find((artifact) =>
     artifact.type === "desktop_design" && artifact.status === "ready" && artifact.url
@@ -362,6 +672,9 @@ export default function WorkspaceDetailPage() {
     artifact.type === "mobile_design" && artifact.status === "ready" && artifact.url
   );
   const prototypeUrl = prototypeArtifact?.url ? withAuthToken(prototypeArtifact.url) : "";
+  const developmentPreviewUrl = developmentPreviewArtifact?.url ? withAuthToken(developmentPreviewArtifact.url) : "";
+  const developmentReportUrl = developmentReportArtifact?.url ? withAuthToken(developmentReportArtifact.url) : "";
+  const acceptanceReportUrl = acceptanceReportArtifact?.url ? withAuthToken(acceptanceReportArtifact.url) : "";
   const desktopDesignUrl = desktopDesign?.url ? withAuthToken(desktopDesign.url) : "";
   const mobileDesignUrl = mobileDesign?.url ? withAuthToken(mobileDesign.url) : "";
 
@@ -402,6 +715,43 @@ export default function WorkspaceDetailPage() {
               <div className="mt-3 rounded-full bg-slate-100 px-3 py-1 text-center text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                 {workspace.target_platform}
               </div>
+              <div className="mt-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500 dark:border-slate-800 dark:bg-slate-950/60 dark:text-slate-400">
+                <div>{workspace.storage_mode === "local" ? "本地目录模式" : "服务器目录模式"}</div>
+                {workspace.binding_id && <div className="mt-1 break-all">Binding ID：{workspace.binding_id}</div>}
+                {workspace.root_path && <div className="mt-1 break-all">{workspace.root_path}</div>}
+                {workspace.binding_state === "healthy" && <div className="mt-1 text-emerald-600 dark:text-emerald-300">目录绑定正常</div>}
+                {workspace.binding_state === "missing_directory" && <div className="mt-1 text-amber-700 dark:text-amber-300">本地目录不存在，请重新绑定目录或重新导入。</div>}
+                {workspace.binding_state === "missing_manifest" && <div className="mt-1 text-amber-700 dark:text-amber-300">本地目录存在，但 .agent-workspace.json 丢失。</div>}
+                {(workspace.binding_state === "missing_directory" || workspace.binding_state === "missing_manifest") && (
+                  <div className="mt-3 space-y-2">
+                    <input
+                      value={rebindPath}
+                      onChange={(event) => setRebindPath(event.target.value)}
+                      placeholder="输入新的本地目录绝对路径"
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-indigo-500/20"
+                    />
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      {isDesktop && (
+                        <button
+                          type="button"
+                          onClick={chooseRebindDirectory}
+                          className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                        >
+                          选择目录
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={rebindDirectory}
+                        disabled={!rebindPath.trim() || rebinding}
+                        className="inline-flex items-center justify-center rounded-xl bg-indigo-600 px-3 py-2 text-xs font-medium text-white transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {rebinding ? <Loader2 size={14} className="animate-spin" /> : "重新绑定目录"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </section>
@@ -409,6 +759,11 @@ export default function WorkspaceDetailPage() {
         {error && (
           <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300">
             {error}
+          </div>
+        )}
+        {importNotice && (
+          <div className="mb-6 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300">
+            {importNotice}
           </div>
         )}
 
@@ -494,7 +849,7 @@ export default function WorkspaceDetailPage() {
                   </>
                 )}
                 <button
-                  onClick={generateStage}
+                  onClick={generateSelectedStage}
                   disabled={generating}
                   className="inline-flex items-center justify-center gap-2 rounded-xl border border-indigo-200 bg-white px-4 py-2.5 text-sm font-medium text-indigo-600 shadow-sm transition hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-indigo-500/30 dark:bg-slate-900 dark:text-indigo-300 dark:hover:bg-indigo-500/10"
                 >
@@ -502,13 +857,77 @@ export default function WorkspaceDetailPage() {
                   生成推荐
                 </button>
                 <button
-                  onClick={approveStage}
-                  disabled={saving || selectedStage.status === "approved"}
+                  type="button"
+                  onClick={() => {
+                    setAutoFollowAI((current) => {
+                      if (!current && currentStageBlocksAuto && currentStage) {
+                        setAutoStatus(`当前处于「${currentStage.title}」，这个阶段需要你人工确认，不能开启自动推进。`);
+                        return current;
+                      }
+                      const next = !current;
+                      setAutoStatus(next ? "自动推进已开启，系统会默认按 AI 推荐继续。" : "已关闭自动推进，恢复手动接管。");
+                      return next;
+                    });
+                  }}
+                  className={`inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-medium shadow-sm transition ${
+                    autoFollowAI
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300"
+                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                  }`}
+                >
+                  <PauseCircle size={16} />
+                  {autoFollowAI ? "关闭自动推进" : (currentStageBlocksAuto ? "当前阶段需人工确认" : "按 AI 推荐自动推进")}
+                </button>
+                <button
+                  onClick={approveSelectedStage}
+                  disabled={saving || selectingOption || selectedStage.status === "approved" || !hasGeneratedRecommendation}
                   className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {saving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
                   确认通过
                 </button>
+              </div>
+            </div>
+
+            {(autoFollowAI || autoStatus) && (
+              <div className={`mb-6 rounded-2xl border px-4 py-3 text-sm ${
+                autoFollowAI
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300"
+                  : "border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-800 dark:bg-slate-950/60 dark:text-slate-300"
+              }`}>
+                <div className="font-medium">
+                  {autoFollowAI ? "自动推进中，可随时关闭接管。" : "自动推进已停止。"}
+                </div>
+                <div className="mt-1 text-xs opacity-80">
+                  {autoStatus || "系统会默认生成推荐、选中 AI 推荐方案，并自动推进到下一阶段。"}
+                </div>
+              </div>
+            )}
+
+            <div className="mb-6 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/60">
+              <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+                <ShieldCheck size={16} className="text-indigo-500" />
+                当前阶段 Agent
+              </div>
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <div className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                    {stageAgentMeta.label}
+                  </div>
+                  <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                    默认标识：{selectedStage.recommendation?.agent_name || stageAgentMeta.name}
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {stageAgentMeta.skills.map((skill) => (
+                    <span
+                      key={skill}
+                      className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+                    >
+                      {skill}
+                    </span>
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -559,6 +978,32 @@ export default function WorkspaceDetailPage() {
               </div>
             )}
 
+            {(selectedStage.stage_key === "development" || selectedStage.stage_key === "acceptance") && developmentPreviewUrl && (
+              <div className="mb-6 overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
+                <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-slate-800">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                      {selectedStage.stage_key === "development" ? "开发阶段预览" : "验收预览"}
+                    </div>
+                    <div className="text-xs text-slate-400">当前阶段绑定的真实 HTML 预览产物</div>
+                  </div>
+                  <a
+                    href={developmentPreviewUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-indigo-200 hover:text-indigo-600 dark:border-slate-700 dark:text-slate-300"
+                  >
+                    新窗口打开
+                  </a>
+                </div>
+                <iframe
+                  title="Workspace Development Preview"
+                  src={developmentPreviewUrl}
+                  className="h-[520px] w-full bg-white"
+                />
+              </div>
+            )}
+
             <div className="grid gap-4 xl:grid-cols-2">
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-800 dark:bg-slate-950/60">
                 <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
@@ -574,8 +1019,23 @@ export default function WorkspaceDetailPage() {
                     {selectedStage.recommendation.model ? ` · ${selectedStage.recommendation.model}` : ""}
                   </div>
                 )}
+                {(selectedStage.recommendation?.execution_session_id || selectedStage.recommendation?.project_path) && (
+                  <div className="mt-4 rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
+                    {selectedStage.recommendation.execution_session_id && (
+                      <div>执行会话：{selectedStage.recommendation.execution_session_id}</div>
+                    )}
+                    {selectedStage.recommendation.project_path && (
+                      <div className="mt-1 break-all">项目目录：{selectedStage.recommendation.project_path}</div>
+                    )}
+                    {selectedStage.recommendation.checkpoint_id && (
+                      <div className="mt-1">Checkpoint：{selectedStage.recommendation.checkpoint_id}</div>
+                    )}
+                  </div>
+                )}
                 <div className="mt-4 rounded-xl bg-white p-3 text-sm text-slate-600 dark:bg-slate-900 dark:text-slate-300">
-                  {selectedStage.recommendation?.recommended_action || "建议先确认本阶段方向。"}
+                  {activeOption
+                    ? `当前已选方案：${activeOption.title}。${activeOption.description}`
+                    : (selectedStage.recommendation?.recommended_action || "建议先确认本阶段方向。")}
                 </div>
                 {focus.length > 0 && (
                   <div className="mt-4 flex flex-wrap gap-2">
@@ -589,41 +1049,91 @@ export default function WorkspaceDetailPage() {
                     ))}
                   </div>
                 )}
-                {options.length > 0 && (
+                {hasGeneratedRecommendation && options.length > 0 && (
                   <div className="mt-5 space-y-2">
                     <div className="text-xs font-semibold text-slate-400">可选方向</div>
                     {options.map((option) => (
-                      <div
+                      <button
                         key={option.title}
-                        className={`rounded-xl border p-3 ${
-                          option.recommended
-                            ? "border-indigo-200 bg-indigo-50/70 dark:border-indigo-500/30 dark:bg-indigo-500/10"
-                            : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"
+                        type="button"
+                        onClick={() => selectStageOption(selectedStage, option.title)}
+                        disabled={selectingOption}
+                        aria-pressed={selectedOptionTitle === option.title}
+                        className={`w-full rounded-xl border p-3 text-left transition ${
+                          selectedOptionTitle === option.title
+                            ? "border-indigo-300 bg-indigo-50 shadow-sm shadow-indigo-100/60 dark:border-indigo-400/40 dark:bg-indigo-500/10"
+                            : option.recommended
+                              ? "border-indigo-200 bg-indigo-50/70 dark:border-indigo-500/30 dark:bg-indigo-500/10"
+                              : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-700 dark:hover:bg-slate-800/80"
                         }`}
                       >
                         <div className="mb-1 flex items-center justify-between gap-2">
                           <span className="text-sm font-medium text-slate-900 dark:text-slate-100">{option.title}</span>
-                          {option.recommended && (
-                            <span className="rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] font-medium text-white">推荐</span>
-                          )}
+                          <div className="flex items-center gap-2">
+                            {selectedOptionTitle === option.title && (
+                              <span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-medium text-white dark:bg-slate-100 dark:text-slate-900">
+                                已选
+                              </span>
+                            )}
+                            {option.recommended && (
+                              <span className="rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] font-medium text-white">推荐</span>
+                            )}
+                          </div>
                         </div>
                         <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">{option.description}</p>
-                      </div>
+                      </button>
                     ))}
                   </div>
                 )}
                 {artifacts.length > 0 && (
                   <div className="mt-5 space-y-2">
-                    <div className="text-xs font-semibold text-slate-400">后续视觉产物</div>
+                    <div className="text-xs font-semibold text-slate-400">阶段产物</div>
                     {artifacts.map((artifact) => (
                       <div
                         key={`${artifact.type}-${artifact.label}`}
                         className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-800 dark:bg-slate-900"
                       >
-                        <span className="text-slate-600 dark:text-slate-300">{artifact.label || artifact.type}</span>
+                        <div className="min-w-0">
+                          <div className="truncate text-slate-600 dark:text-slate-300">{artifact.label || artifact.type}</div>
+                          {artifact.url && (
+                            <a
+                              href={withAuthToken(artifact.url)}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-1 inline-block text-[11px] text-indigo-600 hover:underline dark:text-indigo-300"
+                            >
+                              打开产物
+                            </a>
+                          )}
+                        </div>
                         <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
                           {artifact.status || "pending"}
                         </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {stageTasks.length > 0 && (
+                  <div className="mt-5 space-y-2">
+                    <div className="text-xs font-semibold text-slate-400">执行任务</div>
+                    {stageTasks.map((task) => (
+                      <div
+                        key={task.id}
+                        className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-800 dark:bg-slate-900"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="font-medium text-slate-700 dark:text-slate-200">{task.title}</div>
+                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                            {task.status}
+                          </span>
+                        </div>
+                        {(task.assigned_agent || task.result_summary) && (
+                          <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+                            {task.assigned_agent ? `Agent: ${task.assigned_agent}` : ""}
+                            {task.assigned_agent && task.result_summary ? " · " : ""}
+                            {task.result_summary || ""}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -636,11 +1146,40 @@ export default function WorkspaceDetailPage() {
                   当前产物
                 </div>
                 <div className="min-h-[148px] whitespace-pre-wrap rounded-xl bg-white p-4 text-sm leading-6 text-slate-600 dark:bg-slate-900 dark:text-slate-300">
-                  {selectedStage.content || "该阶段还没有生成具体产物。后续会在这里展示 PRD、页面结构、UI 截图、技术方案或代码执行结果。"}
+                  {activeContent || "该阶段还没有生成具体产物。后续会在这里展示 PRD、页面结构、UI 截图、技术方案或代码执行结果。"}
                 </div>
                 {selectedStage.approved_at && (
                   <div className="mt-3 text-xs text-slate-400">
                     已确认于 {formatDate(selectedStage.approved_at)}
+                  </div>
+                )}
+                {!hasGeneratedRecommendation && (
+                  <div className="mt-3 text-xs text-slate-400">
+                    先生成推荐方案，再选择一个方案并确认进入下一阶段。
+                  </div>
+                )}
+                {(selectedStage.stage_key === "development" || selectedStage.stage_key === "acceptance") && (
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {developmentReportUrl && (
+                      <a
+                        href={developmentReportUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-indigo-200 hover:text-indigo-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+                      >
+                        打开开发执行记录
+                      </a>
+                    )}
+                    {acceptanceReportUrl && (
+                      <a
+                        href={acceptanceReportUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-indigo-200 hover:text-indigo-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+                      >
+                        打开验收报告
+                      </a>
+                    )}
                   </div>
                 )}
               </div>

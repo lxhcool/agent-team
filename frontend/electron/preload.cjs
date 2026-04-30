@@ -21,4 +21,7 @@ contextBridge.exposeInMainWorld("teamAgentDesktop", {
     set: (auth) => ipcRenderer.invoke("desktop-auth:set", auth),
     clear: () => ipcRenderer.invoke("desktop-auth:clear"),
   },
+  workspace: {
+    chooseDirectory: () => ipcRenderer.invoke("workspace:choose-directory"),
+  },
 });

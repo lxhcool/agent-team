@@ -68,6 +68,22 @@ function registerDesktopAuthHandlers() {
   });
 }
 
+function registerWorkspaceHandlers() {
+  ipcMain.handle("workspace:choose-directory", async () => {
+    const result = await dialog.showOpenDialog(mainWindow || undefined, {
+      title: "选择工作区项目目录",
+      properties: ["openDirectory", "createDirectory"],
+      buttonLabel: "选择此目录",
+    });
+
+    if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+      return null;
+    }
+
+    return { path: result.filePaths[0] };
+  });
+}
+
 function createWindow() {
   const useMacTitlebar = process.platform === "darwin";
 
@@ -489,6 +505,7 @@ async function bootstrap() {
 
 app.whenReady().then(() => {
   registerDesktopAuthHandlers();
+  registerWorkspaceHandlers();
   if (process.platform === "darwin" && app.dock && fs.existsSync(appIconPath)) {
     app.dock.setIcon(appIconPath);
   }
