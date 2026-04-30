@@ -13,13 +13,19 @@ Also implements:
 - O-009: Agent exclusive execution
 """
 
+import asyncio
 import json
+import logging
+import os
 from typing import Any, Dict, List, Optional
 
 from app.core.database import async_session
 from app.llm.router import LLMMessage, LLMRouter, LLMError
 from app.models.models import AgentTemplate, Message, MessageType, PlanningSession, PlanningStatus, Task, TaskStatus
 from app.services.event_bus import EventBus, Event
+
+
+logger = logging.getLogger(__name__)
 
 
 class BaseAgent:
@@ -1066,22 +1072,47 @@ class ReviewerAgent(BaseAgent):
             LLMMessage(role="user", content=f"请审查以下{type_label}：\n\n{content}"),
         ]
 
+        try:
+            timeout_seconds = int(os.getenv("TEAM_AGENT_REVIEW_TIMEOUT_SECONDS", "90"))
+            review_text = await asyncio.wait_for(
+                self._review_with_llm(session_id, messages),
+                timeout=timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Reviewer timed out for session %s", session_id)
+            self.emit_status(session_id, "reviewing", "Reviewer 审查超时，使用兜底审查继续流程...")
+            review_text = self._fallback_review_text(type_label, "Reviewer 审查超时")
+        except Exception as err:
+            logger.warning("Reviewer failed for session %s: %s", session_id, err)
+            self.emit_status(session_id, "reviewing", "Reviewer 暂时不可用，使用兜底审查继续流程...")
+            review_text = self._fallback_review_text(type_label, str(err))
+        finally:
+            self.emit_stream_end(session_id)
+            self.emit_typing(session_id, False)
+
+        msg = await self.save_message(session_id, review_text, message_type=MessageType.CHAT, category="review")
+        self.emit_message(session_id, msg)
+        return review_text
+
+    async def _review_with_llm(self, session_id: str, messages: List[LLMMessage]) -> str:
         full_content = []
         try:
             async for chunk in self.call_llm_stream(messages, session_id, max_tokens=2048):
                 full_content.append(chunk)
                 self.emit_stream_chunk(session_id, chunk)
         except LLMError:
-            c = await self.call_llm(messages, session_id, max_tokens=2048)
-            full_content.append(c)
+            content = await self.call_llm(messages, session_id, max_tokens=2048)
+            full_content.append(content)
 
-        review_text = "".join(full_content)
-        msg = await self.save_message(session_id, review_text, message_type=MessageType.CHAT, category="review")
-        self.emit_message(session_id, msg)
+        return "".join(full_content)
 
-        self.emit_stream_end(session_id)
-        self.emit_typing(session_id, False)
-        return review_text
+    def _fallback_review_text(self, type_label: str, reason: str) -> str:
+        return (
+            f"Reviewer 未能在限定时间内完成{type_label}审查，原因：{reason}。\n\n"
+            "为避免流程卡住，本轮采用兜底审查结论：当前内容先进入用户确认环节。"
+            "请用户在确认页重点检查需求覆盖、功能边界、交互预期和风险说明；如有不满意，可以直接退回修改。\n\n"
+            "---REVIEW_VERDICT: APPROVE---"
+        )
 
     @staticmethod
     def parse_verdict(review_text: str) -> str:
