@@ -35,6 +35,7 @@ Each stage must support:
 - Desktop startup timeout hardening:
   - wait for the frontend TCP port, then prewarm `/login` before Electron loads it
   - allow slower first-page compilation in Next dev mode
+  - clear stale `.next` dev build cache on Electron dev startup to avoid broken vendor/static chunks
   - clean up backend/frontend child process groups when Electron exits
 - macOS frameless titlebar offset for native window controls.
 - Workspace data model:

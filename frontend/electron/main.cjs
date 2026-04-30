@@ -258,6 +258,24 @@ function spawnManaged(command, args, options) {
   return child;
 }
 
+function clearDevFrontendBuild() {
+  if (isPackaged || process.env.TEAM_AGENT_KEEP_NEXT_CACHE === "1") {
+    return;
+  }
+
+  const nextBuildDir = path.join(frontendDir, ".next");
+  if (!fs.existsSync(nextBuildDir)) {
+    return;
+  }
+
+  try {
+    fs.rmSync(nextBuildDir, { recursive: true, force: true });
+    log("cleared stale Next dev build cache");
+  } catch (error) {
+    log(`failed to clear Next dev build cache: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 function waitForManagedHttp(url, child, label, timeoutMs = 60000, requestTimeoutMs = 3000) {
   return Promise.race([
     waitForHttp(url, timeoutMs, label, requestTimeoutMs),
@@ -332,6 +350,8 @@ async function startLocalServices() {
     "backend"
   );
   log("backend is ready");
+
+  clearDevFrontendBuild();
 
   const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
   const frontendProcess = spawnManaged(
