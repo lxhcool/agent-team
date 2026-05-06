@@ -157,6 +157,29 @@ agent-team init
 
 ## 3. 启动脚本详细说明
 
+### 3.1 桌面 App 模式
+
+`start-app.sh` 用于一键启动桌面 App（Electron 开发壳）：
+
+| 命令 | 说明 |
+|------|------|
+| `./start-app.sh` | 启动桌面 App |
+| `./start-app.sh stop` | 停止桌面 App |
+| `./start-app.sh restart` | 重启桌面 App |
+| `./start-app.sh status` | 查看桌面 App 状态 |
+| `./start-app.sh logs` | 查看桌面 App 日志 |
+| `./start-app.sh doctor` | 检查本地运行环境 |
+
+说明：
+
+- Electron 会自动拉起本地 FastAPI 和 Next 服务
+- 不需要再单独运行 `./start.sh`
+- 缺少 `.env`、`backend/.venv`、前后端依赖时会自动准备
+- 启动前会尝试清理当前项目残留的本地后端/前端开发进程，并清掉前端 `.next` 缓存
+- 日志文件位于 `.run/desktop-app.log`
+
+### 3.2 网页模式
+
 `start.sh` 提供以下子命令：
 
 | 命令 | 说明 |

@@ -124,6 +124,8 @@ const STATUS_MAP: Record<string, { label: string; color: string; bg: string; ico
   created: { label: "待开始", color: "var(--muted)", bg: "var(--accent-soft)", icon: <Clock size={10} /> },
   planning: { label: "规划中", color: "var(--accent)", bg: "var(--accent-soft)", icon: <Loader2 size={10} className="animate-spin" /> },
   analyzing: { label: "分析中", color: "var(--accent)", bg: "var(--accent-soft)", icon: <Loader2 size={10} className="animate-spin" /> },
+  thinking: { label: "思考中", color: "var(--accent)", bg: "var(--accent-soft)", icon: <Loader2 size={10} className="animate-spin" /> },
+  generating: { label: "输出中", color: "var(--accent)", bg: "var(--accent-soft)", icon: <Loader2 size={10} className="animate-spin" /> },
   researching: { label: "调研中", color: "var(--accent)", bg: "var(--accent-soft)", icon: <Loader2 size={10} className="animate-spin" /> },
   generating_proposal: { label: "生成方案", color: "var(--accent)", bg: "var(--accent-soft)", icon: <Sparkles size={10} /> },
   reviewing: { label: "审查中", color: "var(--accent)", bg: "var(--accent-soft)", icon: <Loader2 size={10} className="animate-spin" /> },
@@ -677,6 +679,11 @@ export default function SessionPage() {
                     <Loader2 size={14} className="animate-spin text-[var(--accent)]" />
                     <span>{statusDetail || "正在思考..."}</span>
                   </div>
+                  {session.status === "thinking" && (
+                    <div className="mt-2 text-[11px] text-[var(--muted)]/80">
+                      正在显示进度摘要，不展示模型完整思考链路。
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

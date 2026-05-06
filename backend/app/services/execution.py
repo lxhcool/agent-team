@@ -29,7 +29,7 @@ from app.models.models import (
     ExecutionSession, ExecutionStatus,
     PlanningSession, PlanningStatus,
     RoundtableSession, RoundtableStatus,
-    Task, TaskStatus, Checkpoint, Artifact,
+    Task, TaskStatus, Checkpoint, Artifact, Message, MessageType,
     validate_planning_transition, validate_task_transition,
 )
 from app.services.event_bus import event_bus, Event
@@ -155,6 +155,85 @@ class SessionPauseService:
         return session
 
 
+# ===== Planning Session Recovery =====
+
+class PlanningSessionRecoveryService:
+    """Recover stale planning sessions into a user-actionable state.
+
+    A planning job can be interrupted after writing the proposal message but
+    before updating the session status. Without recovery, the UI keeps showing
+    an endless generating state even though the user can already review output.
+    """
+
+    @staticmethod
+    async def recover_stale_planning_sessions(timeout_minutes: int = 60) -> dict[str, int]:
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=timeout_minutes)
+        recovered = 0
+        failed = 0
+
+        async with async_session() as db:
+            result = await db.execute(
+                select(PlanningSession).where(
+                    PlanningSession.status == PlanningStatus.PLANNING,
+                    PlanningSession.updated_at < cutoff,
+                )
+            )
+            sessions = result.scalars().all()
+
+            for session in sessions:
+                proposal_result = await db.execute(
+                    select(Message)
+                    .where(
+                        Message.session_id == session.id,
+                        Message.message_type == MessageType.PROPOSAL,
+                    )
+                    .order_by(Message.seq.desc())
+                    .limit(1)
+                )
+                proposal = proposal_result.scalars().first()
+
+                if proposal:
+                    session.status = PlanningStatus.AWAITING_APPROVAL
+                    session.summary = session.summary or proposal.content[:500]
+                    recovered += 1
+                    event_bus.publish(session.id, Event(
+                        event="status_changed",
+                        data={
+                            "session_id": session.id,
+                            "status": PlanningStatus.AWAITING_APPROVAL.value,
+                            "reason": "Recovered stale planning session with generated proposal",
+                        },
+                    ))
+                    continue
+
+                session.status = PlanningStatus.FAILED
+                session.summary = (
+                    f"Planning timed out with no generated proposal after {timeout_minutes} minutes. "
+                    "Please retry this session."
+                )
+                failed += 1
+                event_bus.publish(session.id, Event(
+                    event="error",
+                    data={
+                        "session_id": session.id,
+                        "message": session.summary,
+                    },
+                ))
+
+            if recovered or failed:
+                await db.commit()
+
+        if recovered or failed:
+            logger.info(
+                "Recovered stale planning sessions: recovered=%s failed=%s timeout=%smin",
+                recovered,
+                failed,
+                timeout_minutes,
+            )
+
+        return {"recovered": recovered, "failed": failed}
+
+
 # ===== P2-SS-010: Active Timeout =====
 
 class SessionTimeoutMonitor:
@@ -215,20 +294,9 @@ class SessionTimeoutMonitor:
                     session.id, reason=f"Auto-paused: no activity for {self.timeout_minutes} minutes"
                 )
 
-            # Check Planning Sessions
-            result = await db.execute(
-                select(PlanningSession).where(
-                    PlanningSession.status == PlanningStatus.PLANNING,
-                    PlanningSession.updated_at < cutoff,
-                )
-            )
-            expired_planning_sessions = result.scalars().all()
-
-            for session in expired_planning_sessions:
-                logger.info(f"P2-SS-010: Auto-pausing idle planning session {session.id}")
-                await SessionPauseService.pause_planning_session(
-                    session.id, reason=f"Auto-paused: no activity for {self.timeout_minutes} minutes"
-                )
+        await PlanningSessionRecoveryService.recover_stale_planning_sessions(
+            timeout_minutes=self.timeout_minutes
+        )
 
 
 # ===== P2-O-013: Parallel DAG Scheduler =====

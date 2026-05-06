@@ -62,8 +62,10 @@ async def lifespan(app: FastAPI):
     # A-006: Start agent liveness detection background task
     from app.services.liveness import liveness_detector
     await liveness_detector.start()
+    # Recover interrupted planning jobs before the UI subscribes to session state.
     # P2-SS-010: Start session timeout monitor
-    from app.services.execution import session_timeout_monitor
+    from app.services.execution import PlanningSessionRecoveryService, session_timeout_monitor
+    await PlanningSessionRecoveryService.recover_stale_planning_sessions()
     await session_timeout_monitor.start()
     logging.info("Team Agent Backend started successfully")
     yield  # App is running

@@ -236,7 +236,31 @@ class BaseAgent:
                 stream=True,
             )
             full_content = ""
+            reasoning_chars = 0
+            next_reasoning_notice_at = 1
             async for chunk in stream_iter:
+                if isinstance(chunk, dict):
+                    chunk_type = chunk.get("type")
+                    chunk_content = chunk.get("content") or ""
+                    if chunk_type == "reasoning":
+                        reasoning_chars += len(chunk_content)
+                        if reasoning_chars >= next_reasoning_notice_at:
+                            if reasoning_chars < 80:
+                                detail = "模型正在理解需求..."
+                            elif reasoning_chars < 220:
+                                detail = "模型正在推理方案结构..."
+                            else:
+                                detail = "模型正在整理最终输出..."
+                            self.emit_status(session_id, "thinking", detail)
+                            next_reasoning_notice_at = max(reasoning_chars + 120, next_reasoning_notice_at * 2)
+                        continue
+                    if chunk_type == "content" and chunk_content:
+                        if reasoning_chars:
+                            self.emit_status(session_id, "generating", "推理完成，正在输出结果...")
+                            reasoning_chars = 0
+                        full_content += chunk_content
+                        yield chunk_content
+                    continue
                 if chunk:
                     full_content += chunk
                     yield chunk

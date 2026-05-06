@@ -167,6 +167,13 @@ export default function RoundtablePage() {
       } catch {}
     });
 
+    es.addEventListener("status", (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.detail) setStatusDetail(data.detail);
+      } catch {}
+    });
+
     es.addEventListener("typing", (e) => {
       try {
         const data = JSON.parse(e.data);
@@ -612,6 +619,9 @@ export default function RoundtablePage() {
                   <Loader2 size={12} className="animate-spin text-[var(--accent)]" />
                   {statusDetail || "正在思考..."}
                 </span>
+                {statusDetail?.includes("模型正在") && (
+                  <span className="text-[11px] text-[var(--muted)]/70">显示进度摘要，不展示完整思考链路</span>
+                )}
               </div>
             </div>
           )}

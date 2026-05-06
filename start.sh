@@ -31,6 +31,50 @@ FRONTEND_LOG="$PID_DIR/frontend.log"
 # ─── 默认端口 ───
 BACKEND_DEFAULT_PORT=8200
 FRONTEND_DEFAULT_PORT=3200
+PORT_SCAN_RANGE=10
+
+# ─── 辅助清理 ───
+kill_port_if_owned_by_project() {
+    local port=$1
+    if ! command -v lsof >/dev/null 2>&1; then
+        return 0
+    fi
+
+    local pids
+    pids=$(lsof -t -iTCP:"$port" -sTCP:LISTEN -n -P 2>/dev/null | sort -u || true)
+    [ -z "$pids" ] && return 0
+
+    local pid cmd
+    for pid in $pids; do
+        cmd=$(ps -p "$pid" -o command= 2>/dev/null || true)
+        case "$cmd" in
+            *"$PROJECT_DIR"*|*"uvicorn app.main:app"*|*"next dev"*|*"team-agent-frontend"*)
+                echo -e "${YELLOW}   清理端口 $port 上的旧进程 (PID: $pid)${NC}"
+                kill -TERM "$pid" 2>/dev/null || true
+                sleep 1
+                kill -0 "$pid" 2>/dev/null && kill -KILL "$pid" 2>/dev/null || true
+                ;;
+        esac
+    done
+}
+
+kill_project_port_range() {
+    local base_port=$1
+    local end_port=$((base_port + PORT_SCAN_RANGE))
+    local port=$base_port
+    while [ "$port" -le "$end_port" ]; do
+        kill_port_if_owned_by_project "$port"
+        port=$((port + 1))
+    done
+}
+
+reset_frontend_cache() {
+    local next_dir="$FRONTEND_DIR/.next"
+    if [ -d "$next_dir" ]; then
+        echo -e "${YELLOW}   清理前端构建缓存 .next${NC}"
+        rm -rf "$next_dir"
+    fi
+}
 
 # ─── 清理函数 ───
 cleanup() {
@@ -136,6 +180,10 @@ check_running() {
         rm -f "$BACKEND_PID_FILE" "$FRONTEND_PID_FILE" "$PORT_FILE"
         sleep 1
     fi
+
+    # 即使 PID 文件不存在，也主动清理当前项目残留的开发服务，避免前端继续连到旧代码。
+    kill_project_port_range "$BACKEND_DEFAULT_PORT"
+    kill_project_port_range "$FRONTEND_DEFAULT_PORT"
 }
 
 # ─── 确保 .env 文件存在 ───
@@ -178,6 +226,7 @@ main() {
     mkdir -p "$PID_DIR"
     check_running
     ensure_env
+    reset_frontend_cache
 
     echo -e "${GREEN}🚀 Team Agent 一键启动${NC}"
     echo ""
@@ -219,8 +268,9 @@ EOF
     set -m
     PORT="$backend_port" \
     HOST="0.0.0.0" \
+    PYTHONPYCACHEPREFIX="$PROJECT_DIR/.pycache" \
     CORS_ORIGINS="[\"http://localhost:$frontend_port\",\"http://127.0.0.1:$frontend_port\"]" \
-        $python_cmd -m uvicorn app.main:app --host 0.0.0.0 --port "$backend_port" --reload \
+        "$python_cmd" -m uvicorn app.main:app --host 0.0.0.0 --port "$backend_port" --reload \
         >> "$BACKEND_LOG" 2>&1 &
     local backend_pid=$!
     set +m
@@ -259,7 +309,7 @@ EOF
     > "$FRONTEND_LOG"
 
     set -m
-    PORT="$frontend_port" npx next dev --port "$frontend_port" \
+    PORT="$frontend_port" npx next dev --hostname 127.0.0.1 --port "$frontend_port" \
         >> "$FRONTEND_LOG" 2>&1 &
     local frontend_pid=$!
     set +m

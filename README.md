@@ -56,7 +56,41 @@ cp .env.example .env
 # 编辑 .env 填入 ENCRYPTION_KEY 和 LLM Provider 信息
 ```
 
-### 2. 启动后端
+### 2. 启动桌面 App
+
+推荐直接使用桌面 App 开发壳：
+
+```bash
+./start-app.sh
+```
+
+常用命令：
+
+```bash
+./start-app.sh stop
+./start-app.sh restart
+./start-app.sh status
+./start-app.sh logs
+./start-app.sh doctor
+```
+
+`start-app.sh` 会尽量自动准备运行环境：
+
+- 缺少 `.env` 时自动生成
+- 缺少 `backend/.venv` 时自动创建
+- 后端依赖变更后自动重新安装
+- 前端依赖变更后自动重新安装
+- 启动前自动清理旧开发进程和前端 `.next` 缓存
+
+### 3. 启动 Web 服务
+
+如果你只想跑网页模式：
+
+```bash
+./start.sh
+```
+
+### 4. 手动启动后端
 
 ```bash
 cd backend
@@ -68,7 +102,7 @@ uvicorn app.main:app --reload
 
 后端启动在 http://localhost:8000，API 文档在 http://localhost:8000/docs
 
-### 3. 启动前端
+### 5. 手动启动前端
 
 ```bash
 cd frontend
@@ -78,7 +112,7 @@ npm run dev
 
 前端启动在 http://localhost:3000，API 请求自动代理到后端
 
-### 4. 安装 CLI
+### 6. 安装 CLI
 
 ```bash
 cd cli

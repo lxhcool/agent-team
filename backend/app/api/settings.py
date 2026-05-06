@@ -82,6 +82,22 @@ class ModelSettingsResponse(BaseModel):
     session_budget_usd: float = 10.0
 
 
+def _resolve_model_reference(
+    model_ref: Optional[str],
+    providers: List[ProviderConfig],
+) -> tuple[Optional[str], Optional[str]]:
+    if not model_ref:
+        return None, None
+    for provider in providers:
+        prefix = f"{provider.provider_name}/"
+        if model_ref.startswith(prefix):
+            return model_ref[len(prefix):], provider.provider_name
+    for provider in providers:
+        if provider.default_model == model_ref:
+            return model_ref, provider.provider_name
+    return model_ref, None
+
+
 # ===== Provider Endpoints =====
 
 @router.get("/models")
@@ -138,13 +154,31 @@ async def get_model_settings(
             fallback = json.loads(settings.fallback_chain_json)
         except Exception:
             pass
+    default_model, default_provider = _resolve_model_reference(
+        settings.default_model if settings else None,
+        list(providers),
+    )
+    planning_model, planning_provider = _resolve_model_reference(
+        settings.planning_model if settings else None,
+        list(providers),
+    )
+    execution_model, execution_provider = _resolve_model_reference(
+        settings.execution_model if settings else None,
+        list(providers),
+    )
 
     return {
         "providers": provider_responses,
         "settings": {
             "default_model": settings.default_model if settings else None,
+            "default_model_resolved": default_model,
+            "default_provider": default_provider,
             "planning_model": settings.planning_model if settings else None,
+            "planning_model_resolved": planning_model,
+            "planning_provider": planning_provider,
             "execution_model": settings.execution_model if settings else None,
+            "execution_model_resolved": execution_model,
+            "execution_provider": execution_provider,
             "fallback_chain": fallback,
             "session_budget_usd": settings.session_budget_usd if settings else 10.0,
         },
@@ -418,13 +452,23 @@ async def get_llm_config_for_cli(
     )
     settings = settings_result.scalars().first()
 
-    # Find the best provider: prefer one with api_key, then by execution_model match
+    # Find the best provider: prefer explicit execution/default provider, then any keyed provider.
+    execution_model, execution_provider = _resolve_model_reference(
+        settings.execution_model if settings else None,
+        list(providers),
+    )
+    default_model, default_provider = _resolve_model_reference(
+        settings.default_model if settings else None,
+        list(providers),
+    )
     best = None
-    for p in providers:
-        if p.api_key_encrypted:
-            best = p
-            # If this provider's default_model matches execution_model, use it
-            if settings and settings.execution_model and p.default_model == settings.execution_model:
+    preferred_provider = execution_provider or default_provider
+    if preferred_provider:
+        best = next((p for p in providers if p.provider_name == preferred_provider and p.api_key_encrypted), None)
+    if not best:
+        for p in providers:
+            if p.api_key_encrypted:
+                best = p
                 break
 
     if not best:
@@ -442,14 +486,7 @@ async def get_llm_config_for_cli(
             "message": "Failed to decrypt API key. Please re-configure in Web UI Settings.",
         }
 
-    # Determine model: execution_model > provider default_model > settings.default_model
-    model = None
-    if settings and settings.execution_model:
-        model = settings.execution_model
-    if not model:
-        model = best.default_model
-    if not model and settings:
-        model = settings.default_model
+    model = execution_model or (default_model if best.provider_name == default_provider else None) or best.default_model
 
     return {
         "configured": True,
@@ -502,8 +539,12 @@ async def get_provider_models(
                 }
             else:
                 raise HTTPException(
-                    status_code=resp.status_code,
-                    detail=f"Provider API returned {resp.status_code}",
+                    status_code=502,
+                    detail={
+                        "message": "Provider API returned an error while fetching models",
+                        "provider_status": resp.status_code,
+                        "provider_body": resp.text[:500],
+                    },
                 )
     except httpx.HTTPError as e:
         raise HTTPException(status_code=502, detail=str(e))

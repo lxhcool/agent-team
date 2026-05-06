@@ -25,6 +25,14 @@ type Provider = {
   is_builtin: boolean; enabled: boolean;
 };
 
+type ModelSettingsState = {
+  default_model: string | null;
+  default_model_resolved?: string | null;
+  default_provider?: string | null;
+  planning_model?: string | null;
+  execution_model?: string | null;
+};
+
 const BASE_URL_PRESETS = [
   { label: "OpenAI", value: "https://api.openai.com/v1" },
   { label: "DeepSeek", value: "https://api.deepseek.com/v1" },
@@ -35,10 +43,27 @@ const BASE_URL_PRESETS = [
   { label: "Ollama (本地)", value: "http://localhost:11434/v1" },
 ];
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+const formatFetchModelsError = (status: number, payload: unknown) => {
+  if (isRecord(payload)) {
+    const detail = payload.detail;
+    if (typeof detail === "string") return detail;
+    if (isRecord(detail)) {
+      const message = typeof detail.message === "string" ? detail.message : "Provider API 返回错误";
+      const providerStatus = typeof detail.provider_status === "number" ? detail.provider_status : null;
+      return providerStatus ? `${message} (${providerStatus})` : message;
+    }
+  }
+  return `请求失败 (${status})`;
+};
+
 export default function ModelSettingsPage() {
   const { confirm, ConfirmDialog } = useConfirm();
   const { loading: authLoading } = useAuth();
   const [providers, setProviders] = useState<Provider[]>([]);
+  const [modelSettings, setModelSettings] = useState<ModelSettingsState | null>(null);
   const [loading, setLoading] = useState(true);
   const [addingProvider, setAddingProvider] = useState(false);
   const [newProvider, setNewProvider] = useState({ provider_name: "", display_name: "", base_url: "", api_key: "" });
@@ -53,6 +78,7 @@ export default function ModelSettingsPage() {
       const res = await fetch("/api/settings/models");
       const data = await res.json();
       setProviders(data.providers || []);
+      setModelSettings(data.settings || null);
     } catch {} finally { setLoading(false); }
   }, []);
 
@@ -95,18 +121,30 @@ export default function ModelSettingsPage() {
     setFetchingModels(providerName);
     try {
       const res = await fetch(`/api/settings/models/providers/${providerName}/models`);
-      if (res.ok) {
-        const data = await res.json();
-        const models = data.models || [];
-        if (models.length > 0) {
-          const modelConfigs = models.map((m: { id: string; name: string }) => ({ model_id: m.id, display_name: m.name || m.id }));
-          const provider = providers.find((p) => p.provider_name === providerName);
-          const defaultModel = provider?.default_model || modelConfigs[0].model_id;
-          await fetch(`/api/settings/models/providers/${providerName}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ models: modelConfigs, default_model: defaultModel }) });
-          await fetchConfig();
-        }
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setTestResult((prev) => ({ ...prev, [providerName]: `✗ ${formatFetchModelsError(res.status, data)}` }));
+        return;
       }
-    } catch {} finally { setFetchingModels(null); }
+
+      const models = Array.isArray(data?.models) ? data.models : [];
+      if (models.length === 0) {
+        setTestResult((prev) => ({ ...prev, [providerName]: "✗ 未返回模型列表" }));
+        return;
+      }
+
+      const modelConfigs = models.map((m: { id: string; name: string }) => ({ model_id: m.id, display_name: m.name || m.id }));
+      const provider = providers.find((p) => p.provider_name === providerName);
+      const defaultModel = provider?.default_model || modelConfigs[0].model_id;
+      await fetch(`/api/settings/models/providers/${providerName}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ models: modelConfigs, default_model: defaultModel }) });
+      await fetchConfig();
+      setTestResult((prev) => ({ ...prev, [providerName]: `✓ 已拉取 ${modelConfigs.length} 个模型` }));
+    } catch {
+      setTestResult((prev) => ({ ...prev, [providerName]: "✗ 请求失败" }));
+    } finally {
+      setFetchingModels(null);
+      setTimeout(() => setTestResult((prev) => { const n = { ...prev }; delete n[providerName]; return n; }), 5000);
+    }
   };
 
   const updateDefaultModel = async (providerName: string, modelId: string) => {
@@ -114,6 +152,53 @@ export default function ModelSettingsPage() {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ default_model: modelId }),
+    });
+    await fetchConfig();
+  };
+
+  const modelOptions = providers.flatMap((p) => {
+    if (!p.enabled || !p.has_api_key) return [];
+    const models = p.models.length > 0
+      ? p.models
+      : p.default_model
+        ? [{ model_id: p.default_model, display_name: p.default_model, context_window: 32768 }]
+        : [];
+    return models.map((m) => ({
+      value: `${p.provider_name}/${m.model_id}`,
+      providerName: p.provider_name,
+      providerDisplay: p.display_name || p.provider_name,
+      modelId: m.model_id,
+      modelDisplay: m.display_name || m.model_id,
+    }));
+  });
+
+  const activeDefaultValue = (() => {
+    const raw = modelSettings?.default_model || "";
+    if (raw && modelOptions.some((item) => item.value === raw)) return raw;
+    const resolvedProvider = modelSettings?.default_provider;
+    const resolvedModel = modelSettings?.default_model_resolved || raw;
+    if (resolvedProvider && resolvedModel) {
+      const value = `${resolvedProvider}/${resolvedModel}`;
+      if (modelOptions.some((item) => item.value === value)) return value;
+    }
+    if (raw) {
+      const matched = modelOptions.find((item) => item.modelId === raw);
+      if (matched) return matched.value;
+    }
+    return "";
+  })();
+
+  const activeDefault = modelOptions.find((item) => item.value === activeDefaultValue);
+
+  const updateGlobalDefaultModel = async (value: string) => {
+    await fetch("/api/settings/models", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        default_model: value,
+        planning_model: value,
+        execution_model: value,
+      }),
     });
     await fetchConfig();
   };
@@ -154,6 +239,38 @@ export default function ModelSettingsPage() {
                 <AlertCircle size={11} />未配置 API Key
               </span>
             )}
+          </div>
+
+          <div className="mb-4 rounded-xl bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm ring-1 ring-indigo-200/70 dark:ring-indigo-500/20 p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">当前默认使用模型</h2>
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                  {activeDefault
+                    ? `${activeDefault.providerDisplay} / ${activeDefault.modelDisplay}`
+                    : "还没有选择全局默认模型。选择后规划、阶段生成和执行默认都会使用它。"}
+                </p>
+              </div>
+              <Select
+                value={activeDefaultValue}
+                onValueChange={(value) => value && updateGlobalDefaultModel(value)}
+                disabled={modelOptions.length === 0}
+              >
+                <SelectTrigger className="h-9 w-full text-xs sm:w-80">
+                  <SelectValue placeholder="选择全局默认模型" />
+                </SelectTrigger>
+                <SelectContent>
+                  {modelOptions.map((item) => (
+                    <SelectItem key={item.value} value={item.value} className="text-xs">
+                      {item.providerDisplay} / {item.modelDisplay}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <p className="mt-3 text-[11px] text-slate-400 dark:text-slate-500">
+              Provider 自己的“默认模型”只决定该 Provider 内部优先模型；这里的全局默认决定系统当前实际优先调用哪一个 Provider 和模型。
+            </p>
           </div>
 
           {/* Provider list */}

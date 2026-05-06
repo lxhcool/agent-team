@@ -56,7 +56,6 @@ class PlanningOrchestrator:
             model_settings = settings_result.scalars().first()
             if model_settings:
                 model = model_settings.planning_model or model_settings.default_model
-                provider = self._infer_provider(model, model_settings)
 
             if not provider or not model:
                 from app.core.security import decrypt_api_key
@@ -65,7 +64,18 @@ class PlanningOrchestrator:
                     query = query.where(ProviderConfig.user_id == user_id)
                 prov_result = await db.execute(query)
                 providers = prov_result.scalars().all()
+                if model:
+                    for p in providers:
+                        prefix = f"{p.provider_name}/"
+                        if p.api_key_encrypted and model.startswith(prefix):
+                            provider = p.provider_name
+                            model = model[len(prefix):]
+                            break
+                    if not provider:
+                        provider = self._infer_provider(model, model_settings)
                 for p in providers:
+                    if provider and model:
+                        break
                     if p.api_key_encrypted and p.default_model:
                         provider = p.provider_name
                         model = p.default_model

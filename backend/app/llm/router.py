@@ -9,6 +9,7 @@ Implements:
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import AsyncIterator, Optional
@@ -20,6 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db, async_session
 from app.core.security import decrypt_api_key
 from app.models.models import ProviderConfig, LLMCall
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -83,26 +86,56 @@ class ProviderAdapter:
             "temperature": temperature,
             "stream": stream,
         }
+        if self._is_reasoning_model(model):
+            # Xiaomi MiMo and similar reasoning models may spend a long time in
+            # hidden reasoning before producing content. Prefer low effort for
+            # product workflow latency; unsupported providers generally ignore it.
+            payload["reasoning_effort"] = "low"
 
         if stream:
             return self._stream(url, headers, payload, model, start)
 
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            resp = await client.post(url, headers=headers, json=payload)
+        timeout = httpx.Timeout(240.0, connect=15.0, read=240.0, write=30.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            try:
+                resp = await client.post(url, headers=headers, json=payload)
+            except httpx.HTTPError as e:
+                raise LLMError(f"LLM request failed: {type(e).__name__}: {e}") from e
             duration_ms = int((time.time() - start) * 1000)
 
             if resp.status_code != 200:
-                raise LLMError(
-                    f"LLM API error: {resp.status_code} - {resp.text[:500]}"
-                )
+                if resp.status_code == 400 and "reasoning_effort" in payload:
+                    payload.pop("reasoning_effort", None)
+                    try:
+                        resp = await client.post(url, headers=headers, json=payload)
+                    except httpx.HTTPError as e:
+                        raise LLMError(f"LLM request failed: {type(e).__name__}: {e}") from e
+                    duration_ms = int((time.time() - start) * 1000)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                    else:
+                        raise LLMError(
+                            f"LLM API error: {resp.status_code} - {resp.text[:500]}"
+                        )
+                else:
+                    raise LLMError(
+                        f"LLM API error: {resp.status_code} - {resp.text[:500]}"
+                    )
+            else:
+                data = resp.json()
 
-            data = resp.json()
-            choice = data["choices"][0]
+            try:
+                choice = data["choices"][0]
+            except (KeyError, IndexError, TypeError) as e:
+                raise LLMError(
+                    f"LLM API returned invalid response: {str(data)[:500]}"
+                ) from e
+
             usage = data.get("usage", {})
             prompt_tokens = usage.get("prompt_tokens", 0)
             completion_tokens = usage.get("completion_tokens", 0)
 
-            content = choice["message"]["content"]
+            content = choice.get("message", {}).get("content") or ""
             was_truncated = choice.get("finish_reason") == "length"
             was_continued = False
 
@@ -117,17 +150,20 @@ class ProviderAdapter:
 
                 # Call again for continuation (max 3 times)
                 for _ in range(3):
-                    cont_resp = await client.post(url, headers=headers, json={
+                    try:
+                        cont_resp = await client.post(url, headers=headers, json={
                         "model": model,
                         "messages": [{"role": m.role, "content": m.content} for m in continuation_messages],
                         "max_tokens": max_tokens,
                         "temperature": temperature,
                     })
+                    except httpx.HTTPError:
+                        break
                     if cont_resp.status_code != 200:
                         break
                     cont_data = cont_resp.json()
                     cont_choice = cont_data["choices"][0]
-                    cont_content = cont_choice["message"]["content"]
+                    cont_content = cont_choice.get("message", {}).get("content") or ""
                     content += cont_content
                     was_continued = True
 
@@ -165,30 +201,43 @@ class ProviderAdapter:
         Yields content chunks as they arrive for real-time display.
         Handles: None content deltas, [DONE] marker, malformed data lines.
         """
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            async with client.stream("POST", url, headers=headers, json=payload) as resp:
-                if resp.status_code != 200:
-                    body = await resp.aread()
-                    raise LLMError(f"LLM API error: {resp.status_code}")
+        timeout = httpx.Timeout(90.0, connect=15.0, read=90.0, write=30.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            try:
+                async with client.stream("POST", url, headers=headers, json=payload) as resp:
+                    if resp.status_code != 200:
+                        body = await resp.aread()
+                        raise LLMError(f"LLM API error: {resp.status_code} - {body[:500]!r}")
 
-                async for line in resp.aiter_lines():
-                    if not line.startswith("data: "):
-                        continue
-                    data_str = line[6:].strip()
-                    if data_str == "[DONE]":
-                        break
-                    try:
-                        import json
-                        data = json.loads(data_str)
-                        choices = data.get("choices", [])
-                        if not choices:
+                    async for line in resp.aiter_lines():
+                        if not line.startswith("data: "):
                             continue
-                        delta = choices[0].get("delta", {})
-                        content = delta.get("content")
-                        if content:
-                            yield content
-                    except (json.JSONDecodeError, IndexError, KeyError):
-                        continue
+                        data_str = line[6:].strip()
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            import json
+                            data = json.loads(data_str)
+                            choices = data.get("choices", [])
+                            if not choices:
+                                continue
+                            delta = choices[0].get("delta", {})
+                            content = delta.get("content")
+                            if content:
+                                yield {"type": "content", "content": content}
+                                continue
+                            reasoning_content = delta.get("reasoning_content")
+                            if reasoning_content:
+                                yield {"type": "reasoning", "content": reasoning_content}
+                        except (json.JSONDecodeError, IndexError, KeyError):
+                            continue
+            except httpx.HTTPError as e:
+                raise LLMError(f"LLM stream request failed: {type(e).__name__}: {e}") from e
+
+    @staticmethod
+    def _is_reasoning_model(model: str) -> bool:
+        model_lower = (model or "").lower()
+        return model_lower.startswith("gpt-5") or any(keyword in model_lower for keyword in ("mimo", "reasoner", "thinking"))
 
     @staticmethod
     def _compute_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
