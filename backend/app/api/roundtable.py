@@ -22,7 +22,12 @@ from app.models.models import (
     Task,
     TaskStatus,
     User,
+    Workspace,
+    WorkspaceMember,
+    WorkspaceMemberRole,
+    WorkspaceStageKey,
 )
+from app.api.workspaces import _new_binding_id, _seed_stages
 from app.services.event_bus import event_bus, Event
 
 router = APIRouter()
@@ -633,10 +638,13 @@ async def start_new_round(
 async def promote_to_planning(
     session_id: str,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
-    """Promote a roundtable session to a Planning Session."""
+    """Promote a roundtable session into a workspace-backed planning record."""
     session = await db.get(RoundtableSession, session_id)
     if not session:
+        raise HTTPException(status_code=404, detail="Roundtable session not found")
+    if session.user_id != user.id:
         raise HTTPException(status_code=404, detail="Roundtable session not found")
 
     # Allow re-promoting even if already converted (e.g. planning session was deleted)
@@ -653,8 +661,30 @@ async def promote_to_planning(
         context_parts.append(f"[{msg.sender}]: {msg.content}")
     context = "\n\n".join(context_parts)
 
+    # Create a workspace so the discussion result lands in the platform's main task container.
+    workspace = Workspace(
+        owner_id=session.user_id,
+        name=session.topic[:255],
+        description=session.summary or session.topic,
+        target_platform="general",
+        binding_id=_new_binding_id(),
+        storage_mode="server",
+        created_by=session.user_id,
+        current_stage=WorkspaceStageKey.REQUIREMENTS,
+    )
+    db.add(workspace)
+    await db.flush()
+
+    db.add(WorkspaceMember(
+        workspace_id=workspace.id,
+        user_id=session.user_id,
+        role=WorkspaceMemberRole.OWNER,
+    ))
+    db.add_all(_seed_stages(workspace, session.summary or session.topic))
+
     # Create a new Planning Session
     planning = PlanningSession(
+        workspace_id=workspace.id,
         title=f"From Roundtable: {session.topic}",
         user_id=session.user_id,
         input_text=context,
@@ -666,13 +696,14 @@ async def promote_to_planning(
 
     # Mark roundtable as converted
     session.status = RoundtableStatus.CONVERTED
-    session.summary = f"Promoted to Planning Session {planning.id}"
+    session.summary = f"Promoted to Workspace {workspace.id} and Planning Session {planning.id}"
     await db.commit()
     await db.refresh(planning)
 
     return {
         "status": "promoted",
         "roundtable_id": session_id,
+        "workspace_id": workspace.id,
         "planning_session_id": planning.id,
     }
 

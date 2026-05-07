@@ -88,15 +88,27 @@ export default function RoundtableListPage() {
                 </div>
                 圆桌讨论
               </h1>
-              <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-400">让多个 Agent 围绕话题深入探讨</p>
+              <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-400">当 Workspace 需要多视角讨论、辩论或评审时，再从这里补一轮讨论</p>
             </div>
-            <button
-              onClick={() => setShowCreate(!showCreate)}
-              className="flex items-center gap-1.5 rounded-xl bg-emerald-600 dark:bg-emerald-500 px-4 py-2.5 text-sm font-medium text-white shadow-md shadow-emerald-500/20 hover:bg-emerald-700 dark:hover:bg-emerald-600 transition-all duration-200 cursor-pointer active:scale-[0.97]"
-            >
-              <Plus size={15} />
-              发起讨论
-            </button>
+            <div className="flex items-center gap-3">
+              <Link
+                href="/workspaces"
+                className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                返回 Workspace
+              </Link>
+              <button
+                onClick={() => setShowCreate(!showCreate)}
+                className="flex items-center gap-1.5 rounded-xl bg-emerald-600 dark:bg-emerald-500 px-4 py-2.5 text-sm font-medium text-white shadow-md shadow-emerald-500/20 hover:bg-emerald-700 dark:hover:bg-emerald-600 transition-all duration-200 cursor-pointer active:scale-[0.97]"
+              >
+                <Plus size={15} />
+                发起辅助讨论
+              </button>
+            </div>
+          </div>
+
+          <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50/80 px-4 py-3 text-sm text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300">
+            这里不是平台主入口。更常见的路径仍然是先推进 Workspace，只有在需要集中讨论、观点碰撞或方案评审时，再进入这里。
           </div>
 
           {/* Create Form */}
@@ -110,7 +122,7 @@ export default function RoundtableListPage() {
                   type="text" value={topic}
                   onChange={(e) => { setTopic(e.target.value); setErrorMsg(""); }}
                   onKeyDown={(e) => { if (e.key === "Enter" && topic.trim() && !creating) handleCreate(); }}
-                  placeholder="输入讨论话题，例如：如何优化系统架构..."
+                  placeholder="输入这次需要补充讨论的问题，例如：这个首页信息层级是否要重排..."
                   className="h-11 flex-1 bg-white/50 dark:bg-slate-800/50 rounded-xl px-4 text-sm text-slate-700 dark:text-slate-200 placeholder:text-slate-400 dark:placeholder:text-slate-500 outline-none ring-1 ring-slate-200 dark:ring-slate-700 focus:ring-emerald-300 dark:focus:ring-emerald-500/40 transition-all duration-200"
                   autoFocus
                 />
@@ -119,7 +131,7 @@ export default function RoundtableListPage() {
                   className="flex h-11 shrink-0 items-center gap-2 rounded-xl bg-emerald-600 dark:bg-emerald-500 px-5 text-sm font-medium text-white shadow-md shadow-emerald-500/20 hover:bg-emerald-700 dark:hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer active:scale-[0.97] transition-all duration-200"
                 >
                   {creating ? <Loader2 size={15} className="animate-spin" /> : <Zap size={15} />}
-                  开始
+                  开始讨论
                 </button>
                 <button
                   onClick={() => { setShowCreate(false); setTopic(""); setErrorMsg(""); }}
@@ -140,7 +152,7 @@ export default function RoundtableListPage() {
           {roundtables.length > 0 && (
             <div className="mb-5 relative">
               <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
-              <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="搜索圆桌讨论..."
+              <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="搜索辅助讨论记录..."
                 className="h-10 w-full rounded-xl bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm pl-10 pr-4 text-sm text-slate-700 dark:text-slate-200 placeholder:text-slate-400 dark:placeholder:text-slate-500 outline-none ring-1 ring-slate-200/60 dark:ring-slate-700/40 focus:ring-emerald-300 dark:focus:ring-emerald-500/40 transition-all duration-200" />
             </div>
           )}
@@ -153,8 +165,8 @@ export default function RoundtableListPage() {
                 <UsersRound size={15} strokeWidth={1.5} />
               </div>
               <div className="min-w-0 flex-1">
-                <div className="text-[13px] font-medium text-slate-400 dark:text-slate-500">{searchQuery ? "没有匹配的讨论" : "还没有圆桌讨论"}</div>
-                <div className="text-[11px] text-slate-300 dark:text-slate-600 mt-1">{searchQuery ? "尝试更换搜索关键词" : "点击上方按钮发起第一个讨论"}</div>
+                <div className="text-[13px] font-medium text-slate-400 dark:text-slate-500">{searchQuery ? "没有匹配的讨论" : "还没有辅助讨论记录"}</div>
+                <div className="text-[11px] text-slate-300 dark:text-slate-600 mt-1">{searchQuery ? "尝试更换搜索关键词" : "只有在 Workspace 需要时再补一条讨论"}</div>
               </div>
             </div>
           ) : (
@@ -176,6 +188,9 @@ export default function RoundtableListPage() {
                         <div className="min-w-0 flex-1 pr-5">
                           <div className="text-[13px] font-medium text-slate-800 dark:text-slate-100 truncate group-hover:text-emerald-700 dark:group-hover:text-emerald-300 transition-colors duration-200">{r.topic}</div>
                           <p className="mt-1 line-clamp-2 text-xs text-slate-500 dark:text-slate-400 leading-relaxed">{r.summary || `第 ${r.current_round} / ${r.max_rounds} 轮讨论`}</p>
+                          <div className="mt-1.5 text-[10px] text-slate-400 dark:text-slate-500">
+                            用于补充讨论，不替代 Workspace 主流程
+                          </div>
                         </div>
                       </div>
                       <div className="flex items-center justify-between pt-2 border-t border-slate-100/80 dark:border-slate-800/60">

@@ -4,16 +4,15 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
 import {
-  LayoutDashboard, MessageCircle, UsersRound, Users,
+  LayoutDashboard, Users,
   Wrench, BarChart3, Settings, Sun, Moon, LogOut, UserCircle,
-  ChevronDown, FolderKanban
+  ChevronDown, FolderKanban, UsersRound
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 
 const NAV = [
-  { href: "/", label: "工作台", icon: LayoutDashboard },
+  { href: "/", label: "平台入口", icon: LayoutDashboard },
   { href: "/workspaces", label: "工作区", icon: FolderKanban },
-  { href: "/sessions", label: "Planning", icon: MessageCircle },
   { href: "/roundtable", label: "圆桌讨论", icon: UsersRound },
 ];
 

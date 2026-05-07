@@ -12,6 +12,7 @@ import { useConfirm } from "@/components/ui/confirm-dialog";
 
 type PlanningSession = {
   id: string; title: string; status: string; mode: string;
+  workspace_id?: string | null;
   input_text: string; summary: string | null;
   created_at: string; updated_at: string;
 };
@@ -74,21 +75,31 @@ export default function SessionsPage() {
                 <div className="flex size-8 items-center justify-center rounded-lg bg-indigo-100 dark:bg-indigo-500/15">
                   <Sparkles size={16} className="text-indigo-600 dark:text-indigo-400" />
                 </div>
-                任务规划
+                旧规划记录
               </h1>
-              <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-400">所有历史规划会话</p>
+              <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-400">这里保留旧的 Planning 记录，平台主线已经转到 Workspace</p>
             </div>
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 dark:bg-indigo-500/10 px-3 py-1.5 text-xs font-semibold text-indigo-600 dark:text-indigo-400">
-              <Sparkles size={11} />
-              {sessions.length} 个会话
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 dark:bg-indigo-500/10 px-3 py-1.5 text-xs font-semibold text-indigo-600 dark:text-indigo-400">
+                <Sparkles size={11} />
+                {sessions.length} 条记录
+              </span>
+              <Link href="/workspaces" className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800">
+                返回 Workspace
+                <ArrowRight size={12} />
+              </Link>
+            </div>
+          </div>
+
+          <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300">
+            这是旧的 Planning 归档页面。新的任务、结果、规划沉淀和后续执行，都会优先收口到 Workspace。
           </div>
 
           {/* Search */}
           {sessions.length > 0 && (
             <div className="mb-5 relative">
               <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
-              <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="搜索会话..."
+              <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="搜索旧规划记录..."
                 className="h-10 w-full rounded-xl bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm pl-10 pr-4 text-sm text-slate-700 dark:text-slate-200 placeholder:text-slate-400 dark:placeholder:text-slate-500 outline-none ring-1 ring-slate-200/60 dark:ring-slate-700/40 focus:ring-indigo-300 dark:focus:ring-indigo-500/40 transition-all duration-200" />
             </div>
           )}
@@ -101,8 +112,8 @@ export default function SessionsPage() {
                 <Sparkles size={15} strokeWidth={1.5} />
               </div>
               <div className="min-w-0 flex-1">
-                <div className="text-[13px] font-medium text-slate-400 dark:text-slate-500">{searchQuery ? "没有匹配的会话" : "还没有会话"}</div>
-                <div className="text-[11px] text-slate-300 dark:text-slate-600 mt-1">{searchQuery ? "尝试更换搜索关键词" : "返回工作台创建第一个规划"}</div>
+                <div className="text-[13px] font-medium text-slate-400 dark:text-slate-500">{searchQuery ? "没有匹配的记录" : "还没有旧规划记录"}</div>
+                <div className="text-[11px] text-slate-300 dark:text-slate-600 mt-1">{searchQuery ? "尝试更换搜索关键词" : "新的任务请直接从 Workspace 开始"}</div>
               </div>
             </div>
           ) : (
@@ -116,7 +127,7 @@ export default function SessionsPage() {
                       className="absolute right-2.5 top-2.5 flex size-7 items-center justify-center rounded-lg text-slate-300 dark:text-slate-600 opacity-0 transition-all duration-200 hover:bg-red-50 dark:hover:bg-red-500/10 hover:text-red-500 group-hover:opacity-100 cursor-pointer disabled:opacity-50">
                       {deleting === s.id ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
                     </button>
-                    <Link href={`/sessions/${s.id}`} className="cursor-pointer block">
+                    <Link href={s.workspace_id ? `/workspaces/${s.workspace_id}` : `/sessions/${s.id}`} className="cursor-pointer block">
                       <div className="mb-2 flex items-start gap-2.5">
                         <div className="flex size-9 shrink-0 items-center justify-center rounded-lg transition-colors duration-200" style={{ background: st.bg, color: st.color }}>
                           {s.status === "completed" ? <CheckCircle2 size={15} /> : s.status === "failed" ? <AlertCircle size={15} /> : isActive ? <Loader2 size={15} className="animate-spin" /> : <Diamond size={15} />}
@@ -124,6 +135,9 @@ export default function SessionsPage() {
                         <div className="min-w-0 flex-1 pr-5">
                           <div className="text-[13px] font-medium text-slate-800 dark:text-slate-100 truncate group-hover:text-indigo-700 dark:group-hover:text-indigo-300 transition-colors duration-200">{s.title}</div>
                           <p className="mt-1 line-clamp-2 text-xs text-slate-500 dark:text-slate-400 leading-relaxed">{s.summary || s.input_text}</p>
+                          <div className="mt-1.5 text-[10px] text-slate-400 dark:text-slate-500">
+                            {s.workspace_id ? "已并入对应 Workspace" : "未关联 Workspace 的旧记录"}
+                          </div>
                         </div>
                       </div>
                       <div className="flex items-center justify-between pt-2 border-t border-slate-100/80 dark:border-slate-800/60">

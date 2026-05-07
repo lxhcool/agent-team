@@ -91,7 +91,7 @@ const avatarUrl = (seed: string) =>
 const SESSION_STATUS_MAP: Record<string, { label: string; color: string; bg: string; icon: React.ReactNode }> = {
   active: { label: "讨论中", color: "var(--accent)", bg: "var(--accent-soft)", icon: <Loader2 size={10} className="animate-spin" /> },
   completed: { label: "已结束", color: "var(--success)", bg: "var(--success-soft)", icon: <CheckCircle size={10} /> },
-  converted: { label: "已转 Planning", color: "var(--warning)", bg: "var(--warning-soft)", icon: <Zap size={10} /> },
+  converted: { label: "已沉淀到 Workspace", color: "var(--warning)", bg: "var(--warning-soft)", icon: <Zap size={10} /> },
 };
 
 export default function RoundtablePage() {
@@ -409,16 +409,21 @@ export default function RoundtablePage() {
   }, [id, reloadSession]);
 
   const handlePromote = useCallback(async () => {
-    if (!await confirm({ title: "转为 Planning Session", description: "确认将此圆桌讨论转为 Planning Session？讨论结果将作为规划的输入。" })) return;
+    if (!await confirm({ title: "沉淀到 Workspace", description: "确认将此圆桌讨论整理进 Workspace 吗？讨论内容会作为后续规划记录保留下来。" })) return;
     setActionLoading("promote");
     try {
       const res = await fetch(`/api/roundtable-sessions/${id}/promote`, { method: "POST" });
       if (res.ok) {
         const data = await res.json();
         if (data.planning_session_id) {
-          // Auto-start the planning session after promotion
           await fetch(`/api/planning-sessions/${data.planning_session_id}/start`, { method: "POST" });
-          router.push(`/sessions/${data.planning_session_id}`);
+        }
+        if (data.workspace_id) {
+          window.sessionStorage.setItem(
+            `workspace_import_notice_${data.workspace_id}`,
+            "已把这次圆桌讨论沉淀进当前 Workspace，旧规划记录会作为内部能力继续保留。"
+          );
+          router.push(`/workspaces/${data.workspace_id}`);
         } else await reloadSession();
       } else alert("转换失败，请稍后重试");
     } catch {}
@@ -540,7 +545,7 @@ export default function RoundtablePage() {
               <button onClick={handlePromote}
                 className="rounded-xl bg-[var(--warning)] px-3.5 py-2 text-xs font-semibold text-white cursor-pointer hover:opacity-90 transition-all flex items-center gap-1.5">
                 <Zap size={12} />
-                转为 Planning
+                沉淀到 Workspace
               </button>
             )}
             <button onClick={toggleTheme}
@@ -742,7 +747,7 @@ export default function RoundtablePage() {
               className="w-full rounded-xl bg-[var(--warning)] px-4 py-3 text-xs font-semibold text-white cursor-pointer hover:opacity-90 disabled:opacity-30 transition-all flex items-center justify-center gap-2"
             >
               {actionLoading === "promote" ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
-              {session.status === "converted" ? "重新转为 Planning Session" : actionLoading === "promote" ? "转换中..." : "转为 Planning Session"}
+              {session.status === "converted" ? "重新沉淀到 Workspace" : actionLoading === "promote" ? "处理中..." : "沉淀到 Workspace"}
             </button>
           )}
         </div>

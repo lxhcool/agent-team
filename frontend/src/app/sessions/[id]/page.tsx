@@ -44,6 +44,7 @@ type Task = {
 
 type PlanningSession = {
   id: string;
+  workspace_id?: string | null;
   title: string;
   status: string;
   mode: string;
@@ -493,15 +494,16 @@ export default function SessionPage() {
   const proposalMsg = messages.filter((m) => m.message_type === "proposal").pop();
   const planMsg = messages.filter((m) => m.message_type === "plan").pop();
   const agentConfig = (sender: string) => AGENT_COLORS[sender] || AGENT_COLORS.system;
+  const backHref = session.workspace_id ? `/workspaces/${session.workspace_id}` : "/workspaces";
 
   return (
     <div className="flex h-screen">
       {/* Left sidebar - Tasks */}
       <div className="w-64 shrink-0 border-r border-[var(--card-border)] bg-[var(--card)] py-4 pl-3 pr-4 overflow-y-auto hidden md:block">
         <div className="mb-5">
-          <Link href="/" className="inline-flex items-center gap-2 rounded-xl bg-[var(--surface-elevated)] px-3 py-2 text-xs text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--accent-soft)] cursor-pointer transition-all duration-200">
+          <Link href={backHref} className="inline-flex items-center gap-2 rounded-xl bg-[var(--surface-elevated)] px-3 py-2 text-xs text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--accent-soft)] cursor-pointer transition-all duration-200">
             <ArrowLeft size={14} />
-            返回列表
+            {session.workspace_id ? "返回 Workspace" : "返回工作区"}
           </Link>
         </div>
 
@@ -540,7 +542,7 @@ export default function SessionPage() {
         {/* Header */}
         <div className="flex items-center justify-between border-b border-[var(--card-border)] bg-[var(--card)]/50 backdrop-blur-sm px-5 py-3 shrink-0">
           <div className="flex items-center gap-3 min-w-0">
-            <Link href="/" className="md:hidden flex size-8 items-center justify-center rounded-xl text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--surface-elevated)] transition-all">
+            <Link href={backHref} className="md:hidden flex size-8 items-center justify-center rounded-xl text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--surface-elevated)] transition-all">
               <ArrowLeft size={16} />
             </Link>
             <div className="min-w-0">
@@ -611,6 +613,17 @@ export default function SessionPage() {
               className="flex size-8 cursor-pointer items-center justify-center rounded-xl text-[var(--muted)] transition-all hover:bg-[var(--surface-elevated)] hover:text-[var(--foreground)]">
               {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
             </button>
+          </div>
+        </div>
+
+        <div className="border-b border-[var(--card-border)] bg-sky-50/80 px-5 py-3 text-xs text-sky-700 dark:bg-sky-500/10 dark:text-sky-300">
+          <div className="flex flex-wrap items-center gap-2">
+            <span>这是旧的 Planning 记录页面，后续会逐步并入 Workspace。</span>
+            {session.workspace_id && (
+              <Link href={`/workspaces/${session.workspace_id}`} className="font-semibold hover:underline">
+                进入对应 Workspace
+              </Link>
+            )}
           </div>
         </div>
 
@@ -961,7 +974,7 @@ export default function SessionPage() {
                       className="w-full rounded-xl bg-[var(--accent)] px-3 py-2.5 text-xs font-semibold text-white cursor-pointer hover:bg-[var(--accent-hover)] transition-all shadow-md shadow-indigo-500/20 flex items-center justify-center gap-1.5"
                     >
                       <Zap size={12} />
-                      查看执行结果
+                      查看详细记录
                     </button>
                   </div>
                 )}

@@ -11,9 +11,18 @@ import {
   Loader2,
   Plus,
   Sparkles,
+  Import,
 } from "lucide-react";
 
 import { TopNav } from "../components/topnav";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type WorkspaceStageKey =
   | "requirements"
@@ -44,14 +53,21 @@ type Workspace = {
 };
 
 const STAGE_LABEL: Record<WorkspaceStageKey, string> = {
-  requirements: "需求确认",
-  product: "产品方案",
-  ui_direction: "UI 方向",
-  prototype: "原型确认",
-  technical: "技术方案",
-  development: "开发执行",
-  acceptance: "预览验收",
-  deployment: "部署测试",
+  requirements: "明确方向",
+  product: "补全结构",
+  ui_direction: "调整页面风格",
+  prototype: "生成页面预览",
+  technical: "整理扩展边界",
+  development: "完善前端结果",
+  acceptance: "检查与修正",
+  deployment: "交付预览版本",
+};
+
+const PLATFORM_LABEL: Record<string, string> = {
+  website: "网站",
+  miniapp: "小程序",
+  dashboard: "管理后台",
+  app: "应用",
 };
 
 function formatDate(value: string | null) {
@@ -204,261 +220,314 @@ export default function WorkspacesPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 dark:from-slate-950 dark:via-slate-950 dark:to-indigo-950/20">
       <TopNav />
-      <main className="mx-auto max-w-6xl px-6 pb-16 pt-24">
-        <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-600 dark:bg-indigo-500/15 dark:text-indigo-300">
-              <FolderKanban size={14} />
-              AI 开发团队工作区
-            </div>
-            <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
-              工作区
-            </h1>
-            <p className="mt-2 max-w-2xl text-sm text-slate-500 dark:text-slate-400">
-              每个工作区对应一个产品项目，按需求、产品、UI、原型、技术、开发、验收和部署逐步确认。
-            </p>
-          </div>
-        </div>
-
-        <section className="mb-8 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-          <form onSubmit={handleCreate} className="grid gap-4 lg:grid-cols-2">
+      <main className="min-w-0 pt-14">
+        <div className="mx-auto max-w-6xl px-6 py-8">
+          {/* Header */}
+          <div className="mb-6 flex items-center justify-between">
             <div>
-              <label className="mb-1.5 block text-xs font-medium text-slate-500 dark:text-slate-400">
-                项目名称
-              </label>
-              <input
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                placeholder="例如：本地生活小程序"
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-2 focus:ring-indigo-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-indigo-500/20"
-              />
-            </div>
-            <div>
-              <label className="mb-1.5 block text-xs font-medium text-slate-500 dark:text-slate-400">
-                初始需求
-              </label>
-              <input
-                value={description}
-                onChange={(event) => setDescription(event.target.value)}
-                placeholder="一句话描述你想做什么，后续 AI 团队会继续追问和推荐"
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-2 focus:ring-indigo-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-indigo-500/20"
-              />
-            </div>
-            <div>
-              <label className="mb-1.5 block text-xs font-medium text-slate-500 dark:text-slate-400">
-                目标类型
-              </label>
-              <select
-                value={targetPlatform}
-                onChange={(event) => setTargetPlatform(event.target.value)}
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-2 focus:ring-indigo-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-indigo-500/20"
-              >
-                <option value="website">网站</option>
-                <option value="miniapp">小程序</option>
-                <option value="dashboard">管理后台</option>
-                <option value="app">应用</option>
-              </select>
-            </div>
-            <div>
-              <label className="mb-1.5 block text-xs font-medium text-slate-500 dark:text-slate-400">
-                存储方式
-              </label>
-              <select
-                value={storageMode}
-                onChange={(event) => setStorageMode(event.target.value as "server" | "local")}
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-2 focus:ring-indigo-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-indigo-500/20"
-              >
-                <option value="server">服务器托管目录</option>
-                <option value="local">本地目录</option>
-              </select>
-            </div>
-            <div className="lg:col-span-2">
-              <label className="mb-1.5 block text-xs font-medium text-slate-500 dark:text-slate-400">
-                项目目录
-              </label>
-              <div className="flex flex-col gap-3 sm:flex-row">
-                <input
-                  value={rootPath}
-                  onChange={(event) => setRootPath(event.target.value)}
-                  placeholder={storageMode === "local" ? "输入本地绝对路径，例如 /Users/you/projects/my-app" : "服务器托管模式下可留空"}
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-2 focus:ring-indigo-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-indigo-500/20"
-                />
-                {isDesktop && (
-                  <button
-                    type="button"
-                    onClick={chooseDirectory}
-                    className="inline-flex h-[42px] shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
-                  >
-                    选择目录
-                  </button>
-                )}
-                <button
-                  type="submit"
-                  disabled={!name.trim() || creating || (storageMode === "local" && !rootPath.trim())}
-                  className="inline-flex h-[42px] shrink-0 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 text-sm font-medium text-white shadow-sm transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {creating ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
-                  创建
-                </button>
-              </div>
-              <p className="mt-2 text-xs text-slate-400">
-                {storageMode === "local"
-                  ? "推荐桌面端使用本地目录模式：后续开发文件直接写到你自己的电脑目录里。"
-                  : "服务器托管模式适合快速体验，但长期会占用服务端磁盘。"}
+              <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
+                <div className="flex size-8 items-center justify-center rounded-lg bg-indigo-100 dark:bg-indigo-500/15">
+                  <FolderKanban size={16} className="text-indigo-600 dark:text-indigo-400" />
+                </div>
+                工作区
+              </h1>
+              <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-400">
+                每个 Workspace 都是一件正在推进的任务。在这里整理方向、生成结果、持续修改。
               </p>
             </div>
-          </form>
+            <div className="flex items-center gap-3">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 dark:bg-indigo-500/10 px-3 py-1.5 text-xs font-semibold text-indigo-600 dark:text-indigo-400">
+                <FolderKanban size={11} />
+                {workspaces.length} 个工作区
+              </span>
+            </div>
+          </div>
+
+          {/* Error */}
           {error && (
-            <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300">
+            <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300">
               {error}
             </div>
           )}
-        </section>
 
-        <section className="mb-8 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-          <div className="mb-3">
-            <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">导入本地目录</div>
-            <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-              当工作区记录被删掉，但本地目录和 `.agent-workspace.json` 还在时，可以从这里重新绑定或恢复。
-            </div>
-          </div>
-          <div className="flex flex-col gap-3 sm:flex-row">
-            <input
-              value={importPath}
-              onChange={(event) => setImportPath(event.target.value)}
-              placeholder="输入要导入的本地目录绝对路径"
-              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-2 focus:ring-indigo-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-indigo-500/20"
-            />
-            {isDesktop && (
-              <button
-                type="button"
-                onClick={chooseImportDirectory}
-                className="inline-flex h-[42px] shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
-              >
-                选择目录
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={handleImport}
-              disabled={!importPath.trim() || importing}
-              className="inline-flex h-[42px] shrink-0 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 text-sm font-medium text-white shadow-sm transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {importing ? <Loader2 size={16} className="animate-spin" /> : <ArrowRight size={16} />}
-              导入目录
-            </button>
-          </div>
-        </section>
-
-        {loading ? (
-          <div className="flex h-48 items-center justify-center text-slate-400">
-            <Loader2 className="animate-spin" />
-          </div>
-        ) : workspaces.length === 0 ? (
-          <section className="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-14 text-center dark:border-slate-700 dark:bg-slate-900">
-            <Sparkles className="mx-auto mb-4 text-indigo-500" size={28} />
-            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
-              还没有工作区
-            </h2>
-            <p className="mx-auto mt-2 max-w-md text-sm text-slate-500 dark:text-slate-400">
-              先创建一个项目，系统会从需求确认开始，像真实开发团队一样一步步推进。
-            </p>
-          </section>
-        ) : (
-          <div className="grid gap-4 md:grid-cols-2">
-            {workspaces.map((workspace) => {
-              const progress = workspace.stage_total
-                ? Math.round((workspace.stage_approved / workspace.stage_total) * 100)
-                : 0;
-              return (
-                <div
-                  key={workspace.id}
-                  className="group rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-indigo-200 hover:shadow-md dark:border-slate-800 dark:bg-slate-900 dark:hover:border-indigo-500/30"
-                >
-                  <div className="mb-4 flex items-start justify-between gap-3">
-                    <Link href={`/workspaces/${workspace.id}`} className="min-w-0 flex-1">
-                      <h2 className="truncate text-base font-semibold text-slate-900 dark:text-slate-100">
-                        {workspace.name}
-                      </h2>
-                      <p className="mt-1 line-clamp-2 text-sm text-slate-500 dark:text-slate-400">
-                        {workspace.description || "还没有补充需求描述"}
-                      </p>
-                      <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-slate-400">
-                        <span className="rounded-full bg-slate-100 px-2 py-1 dark:bg-slate-800">
-                          {workspace.storage_mode === "local" ? "本地目录" : "服务器目录"}
-                        </span>
-                        {workspace.binding_id && (
-                          <span className="rounded-full bg-slate-100 px-2 py-1 dark:bg-slate-800">
-                            {workspace.binding_id}
-                          </span>
-                        )}
-                        {workspace.root_path && (
-                          <span className="max-w-full truncate rounded-full bg-slate-100 px-2 py-1 dark:bg-slate-800">
-                            {workspace.root_path}
-                          </span>
-                        )}
-                        {workspace.binding_state === "missing_directory" && (
-                          <span className="rounded-full bg-amber-50 px-2 py-1 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
-                            本地目录丢失
-                          </span>
-                        )}
-                        {workspace.binding_state === "missing_manifest" && (
-                          <span className="rounded-full bg-amber-50 px-2 py-1 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
-                            Manifest 丢失
-                          </span>
-                        )}
-                      </div>
-                    </Link>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => handleDelete(workspace)}
-                        disabled={deletingId === workspace.id}
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-slate-400 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:text-slate-500 dark:hover:border-red-500/20 dark:hover:bg-red-500/10 dark:hover:text-red-300"
-                        aria-label={`删除工作区 ${workspace.name}`}
-                      >
-                        {deletingId === workspace.id ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
-                      </button>
-                      <Link href={`/workspaces/${workspace.id}`}>
-                        <ArrowRight
-                          size={18}
-                          className="mt-1 shrink-0 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-indigo-500"
-                        />
-                      </Link>
+          {/* Main: Left + Right layout */}
+          <div className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)]">
+            {/* Left: Create & Import */}
+            <div className="space-y-4">
+              {/* Create Form Card */}
+              <div className="rounded-xl bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm ring-1 ring-slate-200/60 dark:ring-slate-700/40">
+                <div className="px-4 pt-4 pb-2">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+                    <Plus size={14} className="text-indigo-600 dark:text-indigo-400" />
+                    创建工作区
+                  </div>
+                  <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
+                    填写基本信息，开始一件新任务
+                  </p>
+                </div>
+                <form onSubmit={handleCreate} className="space-y-3 px-4 pb-4">
+                  <div>
+                    <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">
+                      任务名称
+                    </label>
+                    <input
+                      value={name}
+                      onChange={(event) => setName(event.target.value)}
+                      placeholder="例如：个人博客、支付流程改造"
+                      className="h-9 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 px-3 text-sm text-slate-700 dark:text-slate-200 placeholder:text-slate-400 outline-none focus:border-indigo-300 dark:focus:border-indigo-500/40 focus:ring-2 focus:ring-indigo-500/10 transition-all duration-200"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">
+                      任务目标
+                    </label>
+                    <input
+                      value={description}
+                      onChange={(event) => setDescription(event.target.value)}
+                      placeholder="一句话描述你想完成什么"
+                      className="h-9 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 px-3 text-sm text-slate-700 dark:text-slate-200 placeholder:text-slate-400 outline-none focus:border-indigo-300 dark:focus:border-indigo-500/40 focus:ring-2 focus:ring-indigo-500/10 transition-all duration-200"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">
+                        任务类型
+                      </label>
+                      <Select value={targetPlatform} onValueChange={(v) => v != null && setTargetPlatform(v)}>
+                        <SelectTrigger className="w-full h-9 text-sm">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectGroup>
+                            <SelectItem value="website">网站</SelectItem>
+                            <SelectItem value="miniapp">小程序</SelectItem>
+                            <SelectItem value="dashboard">管理后台</SelectItem>
+                            <SelectItem value="app">应用</SelectItem>
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">
+                        存储方式
+                      </label>
+                      <Select value={storageMode} onValueChange={(v) => v != null && setStorageMode(v as "server" | "local")}>
+                        <SelectTrigger className="w-full h-9 text-sm">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectGroup>
+                            <SelectItem value="server">服务器托管</SelectItem>
+                            <SelectItem value="local">本地目录</SelectItem>
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
                     </div>
                   </div>
+                  {storageMode === "local" && (
+                    <div>
+                      <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">
+                        项目目录
+                      </label>
+                      <div className="flex gap-2">
+                        <input
+                          value={rootPath}
+                          onChange={(event) => setRootPath(event.target.value)}
+                          placeholder="/Users/you/projects/my-app"
+                          className="h-9 min-w-0 flex-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 px-3 text-sm text-slate-700 dark:text-slate-200 placeholder:text-slate-400 outline-none focus:border-indigo-300 dark:focus:border-indigo-500/40 focus:ring-2 focus:ring-indigo-500/10 transition-all duration-200"
+                        />
+                        {isDesktop && (
+                          <button
+                            type="button"
+                            onClick={chooseDirectory}
+                            className="inline-flex h-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 px-3 text-xs font-medium text-slate-600 dark:text-slate-300 transition-colors duration-200 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer"
+                          >
+                            选择
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  <button
+                    type="submit"
+                    disabled={!name.trim() || creating || (storageMode === "local" && !rootPath.trim())}
+                    className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-4 text-sm font-medium text-white shadow-sm transition-all duration-200 hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+                  >
+                    {creating ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                    {creating ? "创建中..." : "创建工作区"}
+                  </button>
+                </form>
+              </div>
 
-                  <Link href={`/workspaces/${workspace.id}`} className="block">
-                    <div className="mb-4 flex flex-wrap items-center gap-2 text-xs">
-                    <span className="rounded-full bg-slate-100 px-2.5 py-1 font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                      {workspace.target_platform}
-                    </span>
-                    <span className="rounded-full bg-indigo-50 px-2.5 py-1 font-medium text-indigo-600 dark:bg-indigo-500/15 dark:text-indigo-300">
-                      当前：{STAGE_LABEL[workspace.current_stage]}
-                    </span>
-                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 font-medium text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300">
-                      <CheckCircle2 size={12} />
-                      {workspace.stage_approved}/{workspace.stage_total}
-                    </span>
-                    </div>
-
-                    <div className="h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-                      <div
-                        className="h-full rounded-full bg-indigo-500 transition-all"
-                        style={{ width: `${progress}%` }}
-                      />
-                    </div>
-                    <div className="mt-3 text-xs text-slate-400">
-                      更新于 {formatDate(workspace.updated_at)}
-                    </div>
-                  </Link>
+              {/* Import Card */}
+              <div className="rounded-xl bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm ring-1 ring-slate-200/60 dark:ring-slate-700/40">
+                <div className="px-4 pt-4 pb-2">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+                    <Import size={14} className="text-emerald-600 dark:text-emerald-400" />
+                    导入本地目录
+                  </div>
+                  <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
+                    本地目录和配置还在时，可以重新绑定恢复
+                  </p>
                 </div>
-              );
-            })}
+                <div className="space-y-3 px-4 pb-4">
+                  <div>
+                    <div className="flex gap-2">
+                      <input
+                        value={importPath}
+                        onChange={(event) => setImportPath(event.target.value)}
+                        placeholder="输入本地目录绝对路径"
+                        className="h-9 min-w-0 flex-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 px-3 text-sm text-slate-700 dark:text-slate-200 placeholder:text-slate-400 outline-none focus:border-emerald-300 dark:focus:border-emerald-500/40 focus:ring-2 focus:ring-emerald-500/10 transition-all duration-200"
+                      />
+                      {isDesktop && (
+                        <button
+                          type="button"
+                          onClick={chooseImportDirectory}
+                          className="inline-flex h-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 px-3 text-xs font-medium text-slate-600 dark:text-slate-300 transition-colors duration-200 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer"
+                        >
+                          选择
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleImport}
+                    disabled={!importPath.trim() || importing}
+                    className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-4 text-sm font-medium text-white shadow-sm transition-all duration-200 hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+                  >
+                    {importing ? <Loader2 size={14} className="animate-spin" /> : <ArrowRight size={14} />}
+                    {importing ? "导入中..." : "导入目录"}
+                  </button>
+                </div>
+              </div>
+
+              {/* Hint */}
+              <div className="rounded-xl border border-slate-200/60 bg-slate-50/80 dark:border-slate-800/40 dark:bg-slate-900/40 px-4 py-3 text-xs text-slate-500 dark:text-slate-400">
+                {storageMode === "local"
+                  ? "推荐桌面端使用本地目录模式：后续执行结果可以直接落到你自己的目录里。"
+                  : "服务器托管模式适合快速开始，后续也可以再迁到本地目录。"}
+              </div>
+            </div>
+
+            {/* Right: Workspace List */}
+            <div className="min-w-0">
+              {loading ? (
+                <div className="flex h-64 items-center justify-center text-slate-400">
+                  <Loader2 className="animate-spin" />
+                </div>
+              ) : workspaces.length === 0 ? (
+                <div className="flex h-64 flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-white/70 dark:border-slate-700 dark:bg-slate-900/70 backdrop-blur-sm px-6 text-center">
+                  <div className="flex size-12 items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-300 dark:text-slate-600 mb-4">
+                    <FolderKanban size={22} strokeWidth={1.5} />
+                  </div>
+                  <div className="text-sm font-medium text-slate-400 dark:text-slate-500">还没有工作区</div>
+                  <div className="mt-1 text-[11px] text-slate-300 dark:text-slate-600">
+                    在左侧创建第一个，平台会把它变成持续推进的协作空间
+                  </div>
+                </div>
+              ) : (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {workspaces.map((workspace) => {
+                    const progress = workspace.stage_total
+                      ? Math.round((workspace.stage_approved / workspace.stage_total) * 100)
+                      : 0;
+                    return (
+                      <div
+                        key={workspace.id}
+                        className="group relative rounded-xl bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm ring-1 ring-slate-200/60 dark:ring-slate-700/40 transition-all duration-200 hover:ring-indigo-300/80 dark:hover:ring-indigo-500/30 hover:shadow-md hover:shadow-indigo-500/5 flex flex-col cursor-pointer"
+                        onClick={() => router.push(`/workspaces/${workspace.id}`)}
+                      >
+                        {/* Card body */}
+                        <div className="px-4 pt-3.5 pb-2">
+                          <div className="flex items-start gap-3">
+                            {/* Icon */}
+                            <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
+                              <FolderKanban size={16} />
+                            </div>
+
+                            {/* Info */}
+                            <div className="min-w-0 flex-1 pr-5">
+                              {/* Line 1: Name */}
+                              <div className="flex items-center gap-1.5">
+                                <h3 className="text-[13px] font-semibold text-slate-800 dark:text-slate-100 truncate">
+                                  {workspace.name}
+                                </h3>
+                                {workspace.binding_state === "missing_directory" && (
+                                  <span className="shrink-0 rounded bg-amber-50 dark:bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-amber-600 dark:text-amber-400">
+                                    目录丢失
+                                  </span>
+                                )}
+                                {workspace.binding_state === "missing_manifest" && (
+                                  <span className="shrink-0 rounded bg-amber-50 dark:bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-amber-600 dark:text-amber-400">
+                                    配置丢失
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Line 2: Description */}
+                              <p className="mt-0.5 text-[11px] text-slate-400 dark:text-slate-500 truncate">
+                                {workspace.description || "还没有补充任务目标"}
+                              </p>
+
+                              {/* Line 3: Tags */}
+                              <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400 flex-wrap">
+                                <span className="inline-flex items-center gap-0.5 rounded bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 text-[9px] font-medium">
+                                  {PLATFORM_LABEL[workspace.target_platform] || workspace.target_platform}
+                                </span>
+                                <span className="inline-flex items-center gap-0.5 rounded bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 text-[9px] font-medium">
+                                  {workspace.storage_mode === "local" ? "本地目录" : "服务器目录"}
+                                </span>
+                                <span className="inline-flex items-center gap-0.5 rounded bg-indigo-50 dark:bg-indigo-500/10 px-1.5 py-0.5 text-[9px] font-medium text-indigo-600 dark:text-indigo-400">
+                                  <CheckCircle2 size={9} />
+                                  {workspace.stage_approved}/{workspace.stage_total}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Progress bar */}
+                        <div className="px-4 py-2">
+                          <div className="flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+                            <span className="shrink-0">进展：{STAGE_LABEL[workspace.current_stage]}</span>
+                            <span className="text-slate-300 dark:text-slate-600">·</span>
+                            <span className="text-slate-400 dark:text-slate-500">{formatDate(workspace.updated_at)}</span>
+                          </div>
+                          <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                            <div
+                              className="h-full rounded-full bg-indigo-500 transition-all duration-300"
+                              style={{ width: `${progress}%` }}
+                            />
+                          </div>
+                        </div>
+
+                        {/* Card bottom actions */}
+                        <div className="mt-auto px-4 py-2 border-t border-slate-100 dark:border-slate-800/60 flex items-center justify-between">
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); handleDelete(workspace); }}
+                            disabled={deletingId === workspace.id}
+                            className="inline-flex items-center gap-1 rounded-md bg-red-50 dark:bg-red-500/10 hover:bg-red-100 dark:hover:bg-red-500/20 px-2 py-1 text-[10px] font-medium text-red-600 dark:text-red-400 transition-colors duration-200 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {deletingId === workspace.id ? <Loader2 size={10} className="animate-spin" /> : <Trash2 size={10} />}
+                            删除
+                          </button>
+                          <ArrowRight
+                            size={14}
+                            className="text-slate-300 dark:text-slate-600 transition-all duration-200 group-hover:translate-x-0.5 group-hover:text-indigo-500 dark:group-hover:text-indigo-400"
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
-        )}
+        </div>
       </main>
     </div>
   );

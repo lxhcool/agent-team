@@ -133,11 +133,14 @@ async def get_aggregated_usage(
             stats = session_stats[sid]
             sessions_list.append({
                 "id": sid,
+                "workspace_id": ps.workspace_id if ps else None,
                 "title": ps.title if ps else sid,
                 "calls": stats["calls"],
                 "tokens": stats["tokens"],
                 "cost": stats["cost"],
             })
+
+    sessions_list.sort(key=lambda item: item["calls"], reverse=True)
 
     return {
         "total_calls": total_row.total_calls,
@@ -147,6 +150,7 @@ async def get_aggregated_usage(
         "by_model": by_model,
         "by_agent": by_agent,
         "sessions": sessions_list,
+        "recent_sessions": sessions_list,
     }
 
 

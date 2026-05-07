@@ -16,6 +16,8 @@ export type ChatInputBarProps = {
   sending?: boolean;
   /** Callback when user sends a message */
   onSend: (text: string, files: File[], model: string | null) => void;
+  /** Whether to show the model picker */
+  showModelPicker?: boolean;
   /** File accept string for the file upload button */
   fileAccept?: string;
   /** Max file size in bytes */
@@ -27,6 +29,7 @@ export function ChatInputBar({
   disabled = false,
   sending = false,
   onSend,
+  showModelPicker = true,
   fileAccept = ".md,.txt,.json,.yaml,.yml,.py,.js,.ts,.tsx,.jsx,.css,.html,.sql,.sh,.toml,.xml,.csv,.env,.gitignore,.dockerfile,.makefile,.png,.jpg,.jpeg,.gif,.webp,.bmp,.svg",
   maxFileSize = 10 * 1024 * 1024,
 }: ChatInputBarProps) {
@@ -34,7 +37,7 @@ export function ChatInputBar({
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
   const [imagePreviews, setImagePreviews] = useState<{ name: string; url: string }[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>("");
-  const [showModelPicker, setShowModelPicker] = useState(false);
+  const [showModelMenu, setShowModelMenu] = useState(false);
   const { models: availableModels, defaultModel } = useAvailableModels();
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -150,15 +153,17 @@ export function ChatInputBar({
       {/* Main input row */}
       <div className="flex items-center gap-2 px-4 py-3">
         {/* Model picker */}
-        <ModelPicker
-          models={availableModels}
-          defaultModel={defaultModel}
-          selectedModel={selectedModel}
-          onSelect={setSelectedModel}
-          open={showModelPicker}
-          onToggle={() => setShowModelPicker(v => !v)}
-          onClose={() => setShowModelPicker(false)}
-        />
+        {showModelPicker && (
+          <ModelPicker
+            models={availableModels}
+            defaultModel={defaultModel}
+            selectedModel={selectedModel}
+            onSelect={setSelectedModel}
+            open={showModelMenu}
+            onToggle={() => setShowModelMenu(v => !v)}
+            onClose={() => setShowModelMenu(false)}
+          />
+        )}
 
         {/* File upload */}
         <ToolbarButton title="上传文件">
@@ -222,7 +227,7 @@ export function ChatInputBar({
 function ToolbarButton({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <label
-      className="flex size-9 items-center justify-center rounded-lg border border-[var(--card-border)] bg-[var(--surface-elevated)] text-[var(--muted)] cursor-pointer hover:border-[var(--accent)] hover:text-[var(--accent)] transition-all duration-200 shadow-sm ring-1 ring-white/5 hover:shadow-md hover:shadow-indigo-500/10"
+      className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-[var(--card-border)] bg-[var(--surface-elevated)] text-[var(--muted)] cursor-pointer hover:border-[var(--accent)] hover:text-[var(--accent)] transition-all duration-200 shadow-sm ring-1 ring-white/5 hover:shadow-md hover:shadow-indigo-500/10"
       title={title}
     >
       {children}

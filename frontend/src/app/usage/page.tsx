@@ -12,7 +12,8 @@ type UsageStats = {
   by_provider: { provider: string; calls: number; tokens: number; cost_usd: number }[];
   by_model: { model: string; calls: number; tokens: number; cost_usd: number }[];
   by_agent: { agent: string; calls: number; tokens: number; cost_usd: number }[];
-  recent_sessions: { id: string; title: string; calls: number; tokens: number; cost_usd: number }[];
+  sessions?: { id: string; workspace_id?: string | null; title: string; calls: number; tokens: number; cost_usd: number }[];
+  recent_sessions?: { id: string; workspace_id?: string | null; title: string; calls: number; tokens: number; cost_usd: number }[];
 };
 
 export default function UsagePage() {
@@ -25,6 +26,7 @@ export default function UsagePage() {
 
   const fmtCost = (v: number) => v < 0.01 ? `$${v.toFixed(4)}` : `$${v.toFixed(2)}`;
   const fmtTokens = (v: number) => v >= 1_000_000 ? `${(v / 1_000_000).toFixed(1)}M` : v >= 1_000 ? `${(v / 1_000).toFixed(1)}K` : `${v}`;
+  const sessionRows = stats?.recent_sessions || stats?.sessions || [];
 
   if (loading) {
     return (
@@ -158,20 +160,31 @@ export default function UsagePage() {
             </div>
           )}
 
-          {stats.recent_sessions && stats.recent_sessions.length > 0 && (
+          {sessionRows.length > 0 && (
             <div className="mb-5">
-              <h2 className="mb-2 text-sm font-semibold">近期会话用量</h2>
+              <h2 className="mb-2 text-sm font-semibold">规划记录用量</h2>
               <div className="card overflow-hidden">
                 <table className="w-full text-xs">
                   <thead><tr className="border-b border-[var(--card-border)]">
-                    <th className="text-left px-4 py-2.5 text-[var(--muted)] font-medium">会话</th>
+                    <th className="text-left px-4 py-2.5 text-[var(--muted)] font-medium">记录</th>
                     <th className="text-right px-4 py-2.5 text-[var(--muted)] font-medium">调用</th>
                     <th className="text-right px-4 py-2.5 text-[var(--muted)] font-medium">Token</th>
                     <th className="text-right px-4 py-2.5 text-[var(--muted)] font-medium">费用</th>
                   </tr></thead>
-                  <tbody>{stats.recent_sessions.map((row, i) => (
-                    <tr key={i} className={i < stats.recent_sessions.length - 1 ? "border-b border-[var(--card-border)]" : ""}>
-                      <td className="px-4 py-2"><Link href={`/sessions/${row.id}`} className="font-medium hover:text-[var(--accent)] transition-colors">{row.title || row.id}</Link></td>
+                  <tbody>{sessionRows.map((row, i) => (
+                    <tr key={i} className={i < sessionRows.length - 1 ? "border-b border-[var(--card-border)]" : ""}>
+                      <td className="px-4 py-2">
+                        {row.workspace_id ? (
+                          <Link href={`/workspaces/${row.workspace_id}`} className="font-medium hover:text-[var(--accent)] transition-colors">
+                            {row.title || row.id}
+                          </Link>
+                        ) : (
+                          <span className="font-medium">{row.title || row.id}</span>
+                        )}
+                        <div className="mt-0.5 text-[10px] text-[var(--muted)]">
+                          {row.workspace_id ? "归属于 Workspace" : "旧规划记录"}
+                        </div>
+                      </td>
                       <td className="px-4 py-2 text-right text-[var(--muted)]">{row.calls.toLocaleString()}</td>
                       <td className="px-4 py-2 text-right text-[var(--muted)]">{fmtTokens(row.tokens)}</td>
                       <td className="px-4 py-2 text-right">{fmtCost(row.cost_usd)}</td>

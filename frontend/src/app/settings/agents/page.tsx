@@ -58,7 +58,11 @@ const RISK_CONFIG: Record<string, { label: string; color: string; bg: string }> 
   high: { label: "高风险", color: "#dc2626", bg: "rgba(220,38,38,0.06)" },
 };
 
-const MODE_LABELS: Record<string, string> = { planning: "Planning", execution: "Execution", roundtable: "圆桌讨论" };
+const MODE_LABELS: Record<string, string> = {
+  planning: "规划沉淀",
+  execution: "结果执行",
+  roundtable: "辅助讨论",
+};
 
 const emptyForm: AgentForm = {
   name: "", display_name: "", role: "custom", goal: "", system_prompt: "",
@@ -189,7 +193,7 @@ export default function AgentsPage() {
                 </div>
                 Agent 团队
               </h1>
-              <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-400">管理 AI Agent 团队成员</p>
+              <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-400">管理 AI Agent 团队成员和它们参与的内部能力</p>
             </div>
             <div className="flex items-center gap-3">
               <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 dark:bg-indigo-500/10 px-3 py-1.5 text-xs font-semibold text-indigo-600 dark:text-indigo-400">
@@ -306,6 +310,10 @@ export default function AgentsPage() {
               </div>
             )}
           </div>
+
+          <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-3 text-xs text-slate-500 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-400">
+            这里的“规划沉淀 / 结果执行 / 辅助讨论”是内部能力开关，不代表用户前台看到的独立产品入口。
+          </div>
         </div>
       </main>
 
@@ -352,7 +360,7 @@ export default function AgentsPage() {
                   <span className="font-medium">{RISK_CONFIG[form.risk_level]?.label || form.risk_level}</span>
                 </div>
                 <div className="flex items-center justify-between text-xs">
-                  <span className="text-indigo-200">参与模式</span>
+                  <span className="text-indigo-200">参与能力</span>
                   <span className="font-medium">{form.participation_modes.map((m) => MODE_LABELS[m] || m).join("、")}</span>
                 </div>
                 {form.model && (
@@ -485,7 +493,10 @@ export default function AgentsPage() {
 
                 {/* Participation Modes */}
                 <div>
-                  <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">参与模式</label>
+                  <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">参与能力</label>
+                  <p className="mb-2 text-[11px] text-slate-400 dark:text-slate-500">
+                    这些能力用于控制 Agent 会参与哪类内部流程，不会直接生成新的用户入口。
+                  </p>
                   <div className="flex gap-2">
                     {(["planning", "execution", "roundtable"] as const).map((mode) => {
                       const active = form.participation_modes.includes(mode);
