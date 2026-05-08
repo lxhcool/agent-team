@@ -220,6 +220,26 @@ def _stage_content(stages: List[WorkspaceStage], key: WorkspaceStageKey) -> str:
     return ""
 
 
+async def _stage_has_conclusion_artifact(db: AsyncSession, stage: WorkspaceStage) -> bool:
+    recommendation = _load_recommendation(stage)
+    artifacts = recommendation.get("artifacts")
+    if isinstance(artifacts, list) and any(
+        isinstance(item, dict)
+        and item.get("artifact_id")
+        and str(item.get("type") or "").endswith("_conclusion")
+        for item in artifacts
+    ):
+        return True
+
+    messages = await _get_stage_messages(db, stage.id)
+    return any(
+        message.role == "assistant"
+        and message.kind == "conclusion"
+        and bool(message.artifact_id)
+        for message in messages
+    )
+
+
 @router.post("/workspaces", response_model=WorkspaceResponse)
 async def create_workspace(
     req: CreateWorkspaceRequest,
@@ -608,6 +628,49 @@ async def stream_workspace_stage_message(
     return EventSourceResponse(generator)
 
 
+@router.post("/workspaces/{workspace_id}/stages/{stage_key}/finalize-stream")
+async def finalize_workspace_stage_stream(
+    workspace_id: str,
+    stage_key: WorkspaceStageKey,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    workspace, member = await _get_accessible_workspace(db, workspace_id, user)
+    _require_editor(member)
+
+    stages = await _get_stages(db, workspace_id)
+    stage = next((item for item in stages if item.stage_key == stage_key), None)
+    if not stage:
+        raise HTTPException(status_code=404, detail="Workspace stage not found")
+
+    messages = await _ensure_stage_seed_messages(
+        db=db,
+        workspace=workspace,
+        stage=stage,
+        existing_messages=await _get_stage_messages(db, stage.id),
+    )
+    await db.commit()
+    messages = await _get_stage_messages(db, stage.id)
+
+    generator = await _stream_stage_reply(
+        db=db,
+        user=user,
+        workspace=workspace,
+        stages=stages,
+        stage=stage,
+        messages=messages,
+        resolve_generation_model=_resolve_generation_model,
+        create_workspace_artifact=_create_workspace_artifact,
+        load_recommendation=_load_recommendation,
+        upsert_artifact_reference=_upsert_artifact_reference,
+        serialize_stage_response=lambda item: WorkspaceStageResponse.from_model(item).model_dump(mode="json"),
+        serialize_stage_message_response=lambda item: WorkspaceStageMessageResponse.from_model(item, workspace.id).model_dump(mode="json"),
+        parse_json_object=_parse_json_object,
+        force_finalize=True,
+    )
+    return EventSourceResponse(generator)
+
+
 @router.patch("/workspaces/{workspace_id}/stages/{stage_key}", response_model=WorkspaceStageResponse)
 async def update_workspace_stage(
     workspace_id: str,
@@ -781,16 +844,9 @@ async def approve_workspace_stage(
         raise HTTPException(status_code=404, detail="Workspace stage not found")
     if not _has_generated_recommendation(_load_recommendation, stage):
         raise HTTPException(status_code=400, detail="请先生成推荐方案，再确认通过当前阶段")
-
-    recommendation = _load_recommendation(stage)
-    selected_option = recommendation.get("selected_option")
-    if isinstance(selected_option, str):
-        selected = next(
-            (item for item in recommendation.get("options", []) if isinstance(item, dict) and item.get("title") == selected_option),
-            None,
-        )
-        if selected and isinstance(selected.get("content"), str) and selected.get("content").strip():
-            stage.content = selected["content"].strip()
+    has_conclusion = await _stage_has_conclusion_artifact(db, stage)
+    if not has_conclusion:
+        raise HTTPException(status_code=400, detail="请先生成阶段结论，再进入下一阶段")
 
     stage.status = WorkspaceStageStatus.APPROVED
     stage.approved_by = user.id

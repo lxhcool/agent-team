@@ -32,16 +32,25 @@ def build_requirements_chat_prompt(
 
 对话要求：
 1. 这是对话，不是文档，不要重复整段已有内容。
-2. 如果是第一轮，就直接说“这是什么网站/产品”，然后说第一版最起码要有什么，再问 1-3 个真正影响范围的问题。
+2. 如果是第一轮，不要只反问用户。你要先像产品同事一样主动给出“我建议第一版先这样做”的方案：
+   - 先判断用户要做的是什么产品/网站/小程序。
+   - 把这个产品成立所必需的核心流程直接纳入第一版，不要询问用户是否需要这些基础能力。
+   - 基于常见业务做法补充推荐默认方案，并明确说明“如果你没有特别要求，我先按这个处理”。
+   - 最后只问 1-2 个真正会影响范围、成本或后续设计的关键选择。
 3. 如果不是第一轮，只回应用户这次新补充带来的变化：
    - 先确认你收到了什么新决定
-   - 再更新“那第一版现在我先按什么做”
+   - 再更新“那第一版现在我先按什么做”，把已确认内容沉淀成更明确的方案
    - 如果关键信息已经够了，就直接告诉用户：如果没有别的补充，他可以结束这一阶段，你会整理阶段结论
-4. 不要再问从原句就能直接判断的问题，比如博客网站就不要再问“这是不是博客”“核心动作是什么”“主要给谁用”。
-5. 不要使用“当前匹配判断、已对上的信息、第一版主线、范围边界、非目标”这类报告式标题。
-6. 不要输出 JSON，不要输出模板说明，不要解释你的推理过程。
-7. 用自然中文，像正常同事在微信里推进事情。
-8. 回复控制在 6 到 14 行内，避免又长又像模板。
+4. 区分三类信息：
+   - 必须项：没有它就无法形成完整闭环的内容，直接写入方案，不要问。
+   - 推荐默认项：你根据常识给出建议，用户可以直接同意或修改。
+   - 关键决策项：确实会改变范围、复杂度或交付方式的，才问用户。
+5. 关键决策可以给 A/B/C 选择，但必须有推荐项；不要把所有内容都变成选择题。用户可以直接回复“可以/OK”，表示接受你的推荐。
+6. 不要再问从原句就能直接判断的问题，比如博客网站就不要再问“这是不是博客”“核心动作是什么”“主要给谁用”。
+7. 不要使用“当前匹配判断、已对上的信息、第一版主线、范围边界、非目标”这类报告式标题。
+8. 不要输出 JSON，不要输出模板说明，不要解释你的推理过程。
+9. 用自然中文，像正常同事在微信里推进事情。
+10. 回复控制在 8 到 18 行内；内容要具体贴合用户输入，不要用通用套话撑篇幅。
 
 原始需求：
 {requirement}
@@ -935,13 +944,14 @@ async def stream_stage_reply(
     serialize_stage_response: Callable[[WorkspaceStage], Dict[str, Any]],
     serialize_stage_message_response: Callable[[WorkspaceStageMessage], Dict[str, Any]],
     parse_json_object: Callable[[str], Dict[str, Any]],
+    force_finalize: bool = False,
 ):
     async def event_generator():
         built_content = ""
         built_reasoning = ""
         try:
             recommendation: Optional[Dict[str, Any]] = None
-            should_finalize = await should_finalize_stage_message(
+            should_finalize = force_finalize or await should_finalize_stage_message(
                 db=db,
                 user=user,
                 workspace=workspace,

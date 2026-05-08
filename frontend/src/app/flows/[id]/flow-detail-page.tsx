@@ -21,6 +21,10 @@ import {
 } from "lucide-react";
 
 import { TopNav } from "../../components/topnav";
+import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 
 type StageKey =
   | "requirements"
@@ -198,12 +202,12 @@ const STATUS_LABEL: Record<StageStatus, string> = {
   skipped: "已跳过",
 };
 
-const STATUS_CLASS: Record<StageStatus, string> = {
-  draft: "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400",
-  awaiting_confirmation: "bg-sky-50 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300",
-  approved: "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300",
-  revision_requested: "bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300",
-  skipped: "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400",
+const STATUS_BADGE_VARIANT: Record<StageStatus, "outline" | "info" | "success" | "warning"> = {
+  draft: "outline",
+  awaiting_confirmation: "info",
+  approved: "success",
+  revision_requested: "warning",
+  skipped: "outline",
 };
 
 function formatDate(value: string | null) {
@@ -255,12 +259,12 @@ function buildUserDraftMessage(stage: FlowStage, draft: string): StageMessage {
   };
 }
 
-function buildStreamingAssistantState(stage: FlowStage): StageStreamState {
+function buildStreamingAssistantState(stage: FlowStage, kind: StageStreamState["kind"] = "chat"): StageStreamState {
   return {
     messageId: `temp-assistant-${stage.id}-${Date.now()}`,
     content: "",
     reasoning: "",
-    kind: "chat",
+    kind,
   };
 }
 
@@ -320,6 +324,7 @@ export default function FlowDetailPage() {
         ? messagesByStage[selectedStage.stage_key]
         : buildFallbackMessages(selectedStage))
     : [];
+  const hasStageConclusion = currentStageMessages.some((message) => message.kind === "conclusion");
 
   const stageProgress = visibleStages.length
     ? Math.round((visibleStages.filter((stage) => stage.status === "approved").length / visibleStages.length) * 100)
@@ -382,12 +387,17 @@ export default function FlowDetailPage() {
     }
   };
 
-  const consumeStageStream = async (stageKey: StageKey, endpoint: string, draft?: string) => {
+  const consumeStageStream = async (
+    stageKey: StageKey,
+    endpoint: string,
+    draft?: string,
+    streamKind: StageStreamState["kind"] = "chat",
+  ) => {
     const stage = visibleStages.find((item) => item.stage_key === stageKey);
     if (!stage) return;
 
     const userMessage = draft ? buildUserDraftMessage(stage, draft) : null;
-    const streamingState = buildStreamingAssistantState(stage);
+    const streamingState = buildStreamingAssistantState(stage, streamKind);
 
     if (userMessage) {
       setMessagesByStage((current) => ({
@@ -588,8 +598,14 @@ export default function FlowDetailPage() {
     if (!selectedStage || approving) return;
     setApproving(true);
     setError("");
+    const stageKey = selectedStage.stage_key;
     try {
-      const res = await fetch(`/api/flows/${flowId}/stages/${selectedStage.stage_key}/approve`, {
+      if (!hasStageConclusion) {
+        await consumeStageStream(stageKey, `/api/flows/${flowId}/stages/${stageKey}/finalize-stream`, undefined, "conclusion");
+        return;
+      }
+
+      const res = await fetch(`/api/flows/${flowId}/stages/${stageKey}/approve`, {
         method: "POST",
       });
       if (!res.ok) {
@@ -603,7 +619,7 @@ export default function FlowDetailPage() {
         loadedStageKeysRef.current.delete(data.current_stage);
       }
     } catch (err: any) {
-      setError(err.message || "确认当前阶段失败");
+      setError(err.message || (hasStageConclusion ? "确认当前阶段失败" : "生成阶段结论失败"));
     } finally {
       setApproving(false);
     }
@@ -623,7 +639,7 @@ export default function FlowDetailPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#f4f7fb] dark:bg-slate-950">
+      <div className="min-h-screen bg-white dark:bg-slate-950">
         <TopNav />
         <main className="flex h-screen items-center justify-center pt-14 text-slate-400">
           <Loader2 className="animate-spin" />
@@ -634,7 +650,7 @@ export default function FlowDetailPage() {
 
   if (!flow || !selectedStage || !currentMeta) {
     return (
-      <div className="min-h-screen bg-[#f4f7fb] dark:bg-slate-950">
+      <div className="min-h-screen bg-white dark:bg-slate-950">
         <TopNav />
         <main className="mx-auto max-w-4xl px-6 pt-28">
           <Link href="/" className="inline-flex items-center gap-2 text-sm text-slate-500 hover:text-sky-600">
@@ -668,13 +684,16 @@ export default function FlowDetailPage() {
     : currentStageMessages;
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(14,165,233,0.08),_transparent_32%),linear-gradient(180deg,_#f8fbff_0%,_#eef3f8_100%)] dark:bg-slate-950">
+    <div className="min-h-screen bg-[linear-gradient(117deg,#fcfaff,#e7f1ff)] dark:bg-slate-950">
       <TopNav />
       <main className="mx-auto max-w-[1480px] px-5 pb-10 pt-24 lg:px-8">
         <div className="mb-5 flex items-center justify-between gap-4">
           <Link
             href="/flows"
-            className="inline-flex items-center gap-2 text-sm font-medium text-slate-500 transition hover:text-sky-600"
+            className={cn(
+              buttonVariants({ variant: "outline" }),
+              "h-auto rounded-full bg-white px-4 py-2.5 text-sm text-slate-700 hover:border-violet-200 hover:text-violet-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200",
+            )}
           >
             <ArrowLeft size={16} />
             返回流程列表
@@ -693,67 +712,78 @@ export default function FlowDetailPage() {
         )}
 
         <div className="grid gap-5 xl:grid-cols-[280px_minmax(0,1fr)]">
-          <aside className="rounded-[30px] border border-white/70 bg-white/90 p-4 shadow-[0_24px_80px_rgba(15,23,42,0.08)] backdrop-blur dark:border-slate-800 dark:bg-slate-900/92">
-            <div className="rounded-[24px] bg-slate-950 px-4 py-4 text-white dark:bg-slate-800">
-              <div className="text-[11px] uppercase tracking-[0.2em] text-sky-200/80">项目流程</div>
-              <div className="mt-2 text-xl font-semibold leading-tight">{flow.name}</div>
-              <div className="mt-2 text-sm leading-6 text-slate-300">
-                {flow.description || "这条流程还没有补充详细背景。"}
-              </div>
-              <div className="mt-4">
-                <div className="mb-1 flex items-center justify-between text-xs text-slate-300">
+          <aside className="space-y-4">
+            <Card className="rounded-[30px] border-0 bg-white text-slate-950 shadow-none dark:bg-slate-900 dark:text-slate-50">
+              <CardHeader className="p-4 pb-0">
+                <div className="text-base font-semibold leading-6">
+                  {flow.name}
+                </div>
+                <div className="mt-1 overflow-hidden text-xs leading-5 text-slate-500 [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] dark:text-slate-400">
+                  {flow.description || "这条流程还没有补充详细背景。"}
+                </div>
+              </CardHeader>
+              <CardContent className="p-4 pt-4">
+                <div className="mb-1 flex items-center justify-between text-[11px] font-medium text-slate-500 dark:text-slate-400">
                   <span>总体进度</span>
                   <span>{stageProgress}%</span>
                 </div>
-                <div className="h-2 overflow-hidden rounded-full bg-white/10">
-                  <div className="h-full rounded-full bg-sky-400 transition-all" style={{ width: `${stageProgress}%` }} />
+                <div className="h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-white/10">
+                  <div className="h-full rounded-full bg-violet-500 transition-all" style={{ width: `${stageProgress}%` }} />
                 </div>
-              </div>
-            </div>
+              </CardContent>
+            </Card>
 
-            <div className="mt-4 space-y-2.5">
-              {visibleStages.map((stage, index) => {
-                const meta = STAGE_META[stage.stage_key];
-                const active = stage.stage_key === selectedStage.stage_key;
-                const Icon = meta.icon;
-                return (
-                  <button
-                    key={stage.id}
-                    onClick={() => setSelectedKey(stage.stage_key)}
-                    className={`w-full rounded-[22px] border px-3.5 py-3 text-left transition ${
-                      active
-                        ? "border-sky-200 bg-sky-50 text-sky-900 shadow-sm dark:border-sky-500/30 dark:bg-sky-500/15 dark:text-sky-100"
-                        : "border-transparent bg-slate-50/70 text-slate-700 hover:border-slate-200 hover:bg-white dark:bg-slate-950/60 dark:text-slate-200 dark:hover:border-slate-800 dark:hover:bg-slate-950"
-                    }`}
-                  >
-                    <div className="flex items-start gap-3">
-                      <div
-                        className={`flex size-11 shrink-0 items-center justify-center rounded-2xl ${
-                          active ? "bg-white text-sky-600 dark:bg-slate-900 dark:text-sky-300" : "bg-white text-slate-500 dark:bg-slate-900 dark:text-slate-300"
-                        }`}
-                      >
-                        <Icon size={17} />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="text-xs font-semibold uppercase tracking-[0.16em] opacity-60">
-                            {String(index + 1).padStart(2, "0")}
-                          </div>
-                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${STATUS_CLASS[stage.status]}`}>
-                            {STATUS_LABEL[stage.status]}
-                          </span>
+            <Card className="rounded-[30px] border-slate-100 bg-white p-3 shadow-none dark:border-slate-800 dark:bg-slate-900">
+              <div className="space-y-1.5">
+                {visibleStages.map((stage, index) => {
+                  const meta = STAGE_META[stage.stage_key];
+                  const active = stage.stage_key === selectedStage.stage_key;
+                  const approved = stage.status === "approved";
+                  const Icon = meta.icon;
+                  return (
+                    <Button
+                      variant="ghost"
+                      key={stage.id}
+                      onClick={() => setSelectedKey(stage.stage_key)}
+                      className={`group relative h-auto w-full justify-start rounded-[22px] border px-3 py-3 text-left whitespace-normal transition ${
+                        active
+                          ? "border-violet-200 bg-violet-50 text-violet-950 shadow-sm dark:border-violet-400/25 dark:bg-violet-500/10 dark:text-violet-50"
+                          : "border-transparent bg-white text-slate-700 hover:border-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-700 dark:hover:bg-slate-800/70"
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div
+                          className={`flex size-9 shrink-0 items-center justify-center rounded-full border text-xs font-semibold transition ${
+                            approved
+                              ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-400/20 dark:bg-emerald-500/10 dark:text-emerald-300"
+                              : active
+                                ? "border-violet-200 bg-white text-violet-700 dark:border-violet-400/20 dark:bg-slate-950 dark:text-violet-300"
+                                : "border-slate-200 bg-slate-50 text-slate-500 group-hover:border-violet-100 group-hover:text-violet-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400"
+                          }`}
+                        >
+                          {approved ? <Check size={15} /> : String(index + 1).padStart(2, "0")}
                         </div>
-                        <div className="mt-1 text-sm font-semibold">{meta.label}</div>
-                        <div className="mt-1 text-xs leading-5 opacity-75">{meta.description}</div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="truncate text-sm font-semibold">{meta.label}</div>
+                            <Icon
+                              size={15}
+                              className={active ? "shrink-0 text-violet-500" : "shrink-0 text-slate-300 group-hover:text-violet-300"}
+                            />
+                          </div>
+                          <div className="mt-0.5 truncate text-xs text-slate-400 dark:text-slate-500">
+                            {meta.deliverable}
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
+                    </Button>
+                  );
+                })}
+              </div>
+            </Card>
           </aside>
 
-          <section className="rounded-[30px] border border-white/70 bg-white/92 shadow-[0_24px_80px_rgba(15,23,42,0.08)] backdrop-blur dark:border-slate-800 dark:bg-slate-900/92">
+          <Card className="rounded-[30px] border-slate-100 bg-white shadow-[0_18px_60px_rgba(15,23,42,0.06)] backdrop-blur dark:border-slate-800 dark:bg-slate-900/92">
             <div className="border-b border-slate-200/80 px-5 py-5 dark:border-slate-800">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
                 <div>
@@ -770,23 +800,24 @@ export default function FlowDetailPage() {
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className={`rounded-full px-3 py-1 text-xs font-medium ${STATUS_CLASS[selectedStage.status]}`}>
+                  <Badge variant={STATUS_BADGE_VARIANT[selectedStage.status]} className="px-3 py-1">
                     {STATUS_LABEL[selectedStage.status]}
-                  </span>
-                  <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                  </Badge>
+                  <Badge variant="outline" className="border-transparent bg-slate-100 px-3 py-1 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                     {flow.target_platform}
-                  </span>
+                  </Badge>
                 </div>
               </div>
               {focus.length > 0 && (
                 <div className="mt-4 flex flex-wrap gap-2">
                   {focus.map((item, index) => (
-                    <span
+                    <Badge
                       key={`${selectedStage.id}-${index}-${item}`}
-                      className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+                      variant="outline"
+                      className="border-transparent bg-slate-100 px-2.5 py-1 text-slate-600 dark:bg-slate-800 dark:text-slate-300"
                     >
                       {item}
-                    </span>
+                    </Badge>
                   ))}
                 </div>
               )}
@@ -832,15 +863,17 @@ export default function FlowDetailPage() {
                           }`}
                         >
                           <div className="mb-2 flex justify-end">
-                            <button
+                            <Button
+                              variant="outline"
+                              size="xs"
                               type="button"
                               onClick={() => void copyMessage(message)}
                               disabled={isStreamingAssistant && !message.content.trim()}
-                              className="inline-flex items-center gap-1 rounded-full border border-current/10 px-2.5 py-1 text-[11px] opacity-70 transition hover:opacity-100"
+                              className="h-auto rounded-full border-current/10 px-2.5 py-1 text-[11px] opacity-70 hover:opacity-100"
                             >
                               <Copy size={11} />
                               {copiedMessageId === message.id ? "已复制" : "复制"}
-                            </button>
+                            </Button>
                           </div>
                           {isStreamingAssistant && liveStreamState?.reasoning ? (
                             <div className="mb-3 rounded-2xl border border-current/10 bg-white/50 px-3 py-2 text-xs leading-6 opacity-80 dark:bg-black/10">
@@ -849,7 +882,7 @@ export default function FlowDetailPage() {
                             </div>
                           ) : null}
                           <div className="whitespace-pre-wrap">{message.content}</div>
-                          {isStreamingAssistant && sending && (
+                          {isStreamingAssistant && (sending || approving) && (
                             <div className="mt-3 flex items-center gap-2 text-xs opacity-70">
                               <Loader2 size={12} className="animate-spin" />
                               正在生成...
@@ -930,29 +963,30 @@ export default function FlowDetailPage() {
                       当前阶段会持续对话；只有确认后才进入下一阶段。
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      <button
+                      <Button
+                        variant="outline"
                         type="submit"
                         disabled={sending || approving || !draft.trim()}
-                        className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:border-sky-200 hover:text-sky-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                        className="h-auto rounded-full border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 hover:border-sky-200 hover:text-sky-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
                       >
                         {sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
                         发送
-                      </button>
-                      <button
+                      </Button>
+                      <Button
                         type="button"
                         onClick={approveStage}
                         disabled={approving || sending || selectedStage.status === "approved"}
-                        className="inline-flex items-center gap-2 rounded-full bg-sky-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="h-auto rounded-full bg-sky-600 px-4 py-2.5 text-sm text-white hover:bg-sky-500"
                       >
                         {approving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
-                        确认进入下一阶段
-                      </button>
+                        {hasStageConclusion ? "确认进入下一阶段" : "生成阶段结论"}
+                      </Button>
                     </div>
                   </div>
                 </div>
               </form>
             </div>
-          </section>
+          </Card>
         </div>
       </main>
     </div>

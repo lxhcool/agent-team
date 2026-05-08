@@ -22,6 +22,7 @@ from app.api.workspaces import (
     bootstrap_workspace_stage_stream as bootstrap_workspace_stage_stream_impl,
     create_workspace as create_workspace_impl,
     delete_workspace as delete_workspace_impl,
+    finalize_workspace_stage_stream as finalize_workspace_stage_stream_impl,
     generate_workspace_stage as generate_workspace_stage_impl,
     generate_workspace_stage_stream as generate_workspace_stage_stream_impl,
     get_workspace as get_workspace_impl,
@@ -151,6 +152,21 @@ async def stream_flow_stage_message(
         workspace_id=workspace_id,
         stage_key=stage_key,
         req=req,
+        db=db,
+        user=user,
+    )
+
+
+@router.post("/flows/{workspace_id}/stages/{stage_key}/finalize-stream")
+async def finalize_flow_stage_stream(
+    workspace_id: str,
+    stage_key: WorkspaceStageKey,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return await finalize_workspace_stage_stream_impl(
+        workspace_id=workspace_id,
+        stage_key=stage_key,
         db=db,
         user=user,
     )
