@@ -1,4 +1,4 @@
-"""Artifact API - endpoints for proposal and execution plan export.
+"""Artifact API - endpoints for stage artifacts and proposal export.
 
 Implements:
 - F-003: Task failure artifact tracking
@@ -43,8 +43,7 @@ class ArtifactResponse(BaseModel):
 
 class ExportResponse(BaseModel):
     proposal_downloaded: bool = False
-    execution_plan_downloaded: bool = False
-    cli_pull_command: Optional[str] = None
+    summary_downloaded: bool = False
 
 
 # ===== Endpoints =====
@@ -119,55 +118,13 @@ async def get_proposal(
     return PlainTextResponse(content=content, media_type="text/markdown")
 
 
-@router.get("/planning-sessions/{session_id}/execution-plan")
-async def get_execution_plan(
-    session_id: str,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    """Get the execution_plan.json content for a planning session.
-
-    If the artifact doesn't exist yet, it will be generated on-the-fly.
-    """
-    session = await get_owned_planning_session(db, session_id, user)
-
-    # Only allow plan access after approval
-    allowed_statuses = {
-        PlanningStatus.READY_FOR_EXPORT,
-        PlanningStatus.GENERATING_PLAN,
-        PlanningStatus.COMPLETED,
-    }
-    if session.status not in allowed_statuses:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Execution plan not available in status: {session.status.value}",
-        )
-
-    # Try to get existing artifact, or generate on-the-fly
-    plan_data = await artifact_service.get_execution_plan(session_id)
-    if plan_data is None:
-        artifact = await artifact_service.generate_execution_plan(session_id)
-        if not artifact:
-            raise HTTPException(status_code=404, detail="No execution plan found for this session")
-        plan_data = await artifact_service.get_execution_plan(session_id)
-
-    if plan_data is None:
-        raise HTTPException(status_code=404, detail="Execution plan file not found")
-
-    return plan_data
-
-
 @router.post("/planning-sessions/{session_id}/export", response_model=ExportResponse)
 async def export_session(
     session_id: str,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Generate and export both proposal.md and execution_plan.json.
-
-    This endpoint triggers artifact generation and returns a status
-    indicating what was generated, plus a CLI pull command.
-    """
+    """Generate and export current planning artifacts."""
     session = await get_owned_planning_session(db, session_id, user)
 
     result = ExportResponse()
@@ -177,15 +134,7 @@ async def export_session(
         proposal_artifact = await artifact_service.generate_proposal(session_id)
         result.proposal_downloaded = proposal_artifact is not None
 
-    # Generate execution plan if possible
-    if session.status in {PlanningStatus.READY_FOR_EXPORT, PlanningStatus.GENERATING_PLAN, PlanningStatus.COMPLETED}:
-        plan_artifact = await artifact_service.generate_execution_plan(session_id)
-        result.execution_plan_downloaded = plan_artifact is not None
-
-    # Generate CLI pull command
-    if result.execution_plan_downloaded:
-        plan_id = f"plan_{session_id}"
-        result.cli_pull_command = f"agent-team pull-plan --plan-id {plan_id} --server http://localhost:8000"
+    result.summary_downloaded = result.proposal_downloaded
 
     return result
 

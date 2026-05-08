@@ -8,8 +8,8 @@ import { AppInit } from "./components/init";
 const geist = Geist({subsets:['latin'],variable:'--font-sans'});
 
 export const metadata: Metadata = {
-  title: "Agent Team - 多 Agent 协作系统",
-  description: "Web 主导 + 本地 CLI 执行的多 Agent 协作系统",
+  title: "Team Agent - AI 交付经理工作台",
+  description: "面向小团队的 AI 交付经理工作台",
   icons: {
     icon: "/logo.png",
     apple: "/logo.png",

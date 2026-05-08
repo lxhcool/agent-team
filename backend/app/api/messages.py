@@ -246,7 +246,7 @@ async def approve_session(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Approve the proposal and trigger execution plan generation."""
+    """Approve the proposal and trigger planning summary generation."""
     session = await get_owned_planning_session(db, session_id, user)
     if session.status != PlanningStatus.AWAITING_APPROVAL:
         raise HTTPException(
@@ -258,7 +258,7 @@ async def approve_session(
     session.status = PlanningStatus.GENERATING_PLAN
     await db.commit()
 
-    # Kick off plan generation in background
+    # Kick off planning summary generation in background
     orchestrator = get_orchestrator()
     task = asyncio.create_task(orchestrator.approve_and_plan(session_id))
     _running_planning_tasks[session_id] = task

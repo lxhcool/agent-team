@@ -4,7 +4,7 @@ Last updated: 2026-04-30
 
 ## Product Direction
 
-Team Agent is moving from a CLI-oriented developer tool to a desktop app where a non-technical user can create a website, mini app, dashboard, or app through an AI development-team workflow.
+Team Agent is moving toward an AI delivery manager for small teams. The product helps users turn a new idea or iteration request into staged, reviewable, ready-to-start delivery artifacts.
 
 The core product unit is a workspace. A workspace represents a product project, not just a code repository.
 
@@ -15,10 +15,9 @@ The core product unit is a workspace. A workspace represents a product project, 
 3. Confirm product plan
 4. Confirm UI direction
 5. Confirm prototype
-6. Confirm technical plan
-7. Execute development
-8. Preview acceptance
-9. Deploy test build
+6. Confirm implementation readiness
+7. Confirm acceptance criteria
+8. Review delivery overview
 
 Each stage must support:
 
@@ -83,21 +82,19 @@ Each stage must support:
 - Add multimodal UI review:
   - send generated design drafts or rendered previews to vision-capable model
   - write review summary back to prototype stage
-- Add workspace project repository:
-  - local project path per workspace
-  - checkpoint before code changes
-  - file change summaries
-  - rollback
-- Connect workspace stages to development execution:
-  - migrate useful planning-session logic into workspace stages
-  - write planning output directly back to stages
-  - run development execution under workspace boundary
+- Add richer staged artifacts:
+  - dynamic artifact structures per project type
+  - stage-specific review checklist
+  - revision comparison and artifact diff summary
+- Strengthen iteration intake:
+  - ingest existing docs and notes
+  - detect scope changes and open questions
+  - summarize impact across stages
 
 ## Engineering Notes
 
 - Every workspace-owned record must be isolated by `workspace_id`.
 - Every user-owned access path must be authorized through `workspace_members`.
-- Desktop UI can hide CLI details, but CLI should remain available for advanced users.
 - Planning sessions are legacy/advanced records; the normal user flow should treat workspace stages as the product planning surface.
 - Prototype confirmation must favor real rendered HTML/CSS over decorative generated images.
 - Concept images are useful for style exploration, but approval should be based on rendered previews and screenshots.

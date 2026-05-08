@@ -270,7 +270,7 @@ EOF
     HOST="0.0.0.0" \
     PYTHONPYCACHEPREFIX="$PROJECT_DIR/.pycache" \
     CORS_ORIGINS="[\"http://localhost:$frontend_port\",\"http://127.0.0.1:$frontend_port\"]" \
-        "$python_cmd" -m uvicorn app.main:app --host 0.0.0.0 --port "$backend_port" --reload \
+        "$python_cmd" -m uvicorn app.main:app --host 0.0.0.0 --port "$backend_port" \
         >> "$BACKEND_LOG" 2>&1 &
     local backend_pid=$!
     set +m

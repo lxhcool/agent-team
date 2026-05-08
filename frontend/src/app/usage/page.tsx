@@ -171,7 +171,7 @@ export default function UsagePage() {
                   </tr></thead>
                   <tbody>{stats.recent_sessions.map((row, i) => (
                     <tr key={i} className={i < stats.recent_sessions.length - 1 ? "border-b border-[var(--card-border)]" : ""}>
-                      <td className="px-4 py-2"><Link href={`/sessions/${row.id}`} className="font-medium hover:text-[var(--accent)] transition-colors">{row.title || row.id}</Link></td>
+                      <td className="px-4 py-2"><span className="font-medium">{row.title || row.id}</span></td>
                       <td className="px-4 py-2 text-right text-[var(--muted)]">{row.calls.toLocaleString()}</td>
                       <td className="px-4 py-2 text-right text-[var(--muted)]">{fmtTokens(row.tokens)}</td>
                       <td className="px-4 py-2 text-right">{fmtCost(row.cost_usd)}</td>

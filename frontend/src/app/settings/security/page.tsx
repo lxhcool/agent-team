@@ -75,14 +75,14 @@ export default function SecurityPage() {
         <div className="mx-auto max-w-4xl px-6 py-8">
           <div className="mb-6">
             <h1 className="text-2xl font-semibold tracking-tight">安全配置</h1>
-            <p className="mt-1 text-sm text-[var(--muted)]">控制 CLI 执行安全策略</p>
+            <p className="mt-1 text-sm text-[var(--muted)]">控制系统可用工具和敏感数据访问边界</p>
           </div>
 
           <div className="card p-4 mb-3">
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-semibold">安全模式</h3>
-                <p className="text-xs text-[var(--muted)] mt-0.5">启用后，所有命令执行前需人工确认</p>
+                <p className="text-xs text-[var(--muted)] mt-0.5">启用后，高风险操作需要人工确认</p>
               </div>
               <button onClick={() => setForm({ ...form, safe_mode: !form.safe_mode })}
                 className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-pointer ${form.safe_mode ? "bg-[var(--accent)]" : "bg-[var(--card-border)]"}`}>

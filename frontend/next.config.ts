@@ -8,11 +8,6 @@ const nextConfig = {
         source: "/api/:path*",
         destination: `http://127.0.0.1:${backendPort}/api/:path*`,
       },
-      // Alias: /execution/:id -> /executions/:id (per requirements design doc)
-      {
-        source: "/execution/:id",
-        destination: "/executions/:id",
-      },
     ];
   },
 };

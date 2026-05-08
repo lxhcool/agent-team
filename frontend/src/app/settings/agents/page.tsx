@@ -43,12 +43,11 @@ type AgentForm = {
 };
 
 const ROLE_OPTIONS = [
-  { value: "coordinator", label: "协调者" },
-  { value: "architect", label: "架构师" },
-  { value: "developer", label: "开发者" },
+  { value: "delivery_lead", label: "交付负责人" },
+  { value: "analyst", label: "需求分析师" },
+  { value: "strategist", label: "范围策略师" },
   { value: "reviewer", label: "审查者" },
-  { value: "tester", label: "测试者" },
-  { value: "analyst", label: "分析师" },
+  { value: "spec_writer", label: "文档整理者" },
   { value: "custom", label: "自定义" },
 ];
 
@@ -58,7 +57,7 @@ const RISK_CONFIG: Record<string, { label: string; color: string; bg: string }> 
   high: { label: "高风险", color: "#dc2626", bg: "rgba(220,38,38,0.06)" },
 };
 
-const MODE_LABELS: Record<string, string> = { planning: "Planning", execution: "Execution", roundtable: "圆桌讨论" };
+const MODE_LABELS: Record<string, string> = { planning: "方案阶段", roundtable: "圆桌讨论" };
 
 const emptyForm: AgentForm = {
   name: "", display_name: "", role: "custom", goal: "", system_prompt: "",
@@ -72,8 +71,8 @@ const avatarUrl = (seed: string) =>
   seed ? `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(seed)}` : "";
 
 const ROLE_COLORS: Record<string, string> = {
-  coordinator: "#6366f1", architect: "#8b5cf6", developer: "#3b82f6",
-  reviewer: "#f59e0b", tester: "#10b981", analyst: "#ec4899", custom: "#64748b",
+  delivery_lead: "#6366f1", strategist: "#8b5cf6", spec_writer: "#3b82f6",
+  reviewer: "#f59e0b", analyst: "#10b981", custom: "#64748b",
 };
 
 export default function AgentsPage() {
@@ -487,7 +486,7 @@ export default function AgentsPage() {
                 <div>
                   <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">参与模式</label>
                   <div className="flex gap-2">
-                    {(["planning", "execution", "roundtable"] as const).map((mode) => {
+                    {(["planning", "roundtable"] as const).map((mode) => {
                       const active = form.participation_modes.includes(mode);
                       return (
                         <button key={mode} type="button" onClick={() => toggleMode(mode)}

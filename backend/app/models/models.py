@@ -35,7 +35,7 @@ class PlanningStatus(str, enum.Enum):
     CREATED = "created"
     PLANNING = "planning"              # Leader + Agent 团队正在分析需求和形成方案
     AWAITING_APPROVAL = "awaiting_approval"  # 等待用户确认方案
-    READY_FOR_EXPORT = "ready_for_export"    # 方案已确认，可导出 proposal.md 和 execution_plan.json
+    READY_FOR_EXPORT = "ready_for_export"    # 方案已确认，可导出 proposal.md 和 planning_summary.json
     COMPLETED = "completed"
     CANCELLED = "cancelled"
     FAILED = "failed"
@@ -201,9 +201,9 @@ class Workspace(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     target_platform: Mapped[str] = mapped_column(String(50), default="website")
-    binding_id: Mapped[Optional[str]] = mapped_column(String(80), nullable=True, index=True)
-    storage_mode: Mapped[str] = mapped_column(String(30), default="server")
-    root_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    binding_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    storage_mode: Mapped[str] = mapped_column(String(30), nullable=False, default="server")
+    root_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     status: Mapped[WorkspaceStatus] = mapped_column(Enum(WorkspaceStatus), default=WorkspaceStatus.ACTIVE)
     current_stage: Mapped[WorkspaceStageKey] = mapped_column(
         Enum(WorkspaceStageKey), default=WorkspaceStageKey.REQUIREMENTS
@@ -264,6 +264,25 @@ class WorkspaceStage(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
 
     workspace: Mapped["Workspace"] = relationship(back_populates="stages")
+    messages: Mapped[List["WorkspaceStageMessage"]] = relationship(
+        back_populates="stage", cascade="all, delete-orphan", order_by="WorkspaceStageMessage.created_at"
+    )
+
+
+class WorkspaceStageMessage(Base):
+    __tablename__ = "workspace_stage_messages"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    stage_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("workspace_stages.id"), nullable=False, index=True
+    )
+    role: Mapped[str] = mapped_column(String(20), nullable=False, default="assistant")
+    kind: Mapped[str] = mapped_column(String(30), nullable=False, default="chat")
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    artifact_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+    stage: Mapped["WorkspaceStage"] = relationship(back_populates="messages")
 
 
 class PlanningSession(Base):

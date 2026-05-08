@@ -444,12 +444,21 @@ class LLMRouter:
                     )
                     # Log successful call
                     if session_id:
-                        await self._log_call(
-                            session_id=session_id,
-                            session_type=session_type,
-                            agent_name=agent_name,
-                            result=result,
-                        )
+                        try:
+                            await self._log_call(
+                                session_id=session_id,
+                                session_type=session_type,
+                                agent_name=agent_name,
+                                result=result,
+                            )
+                        except Exception as log_exc:
+                            logger.warning(
+                                "llm call succeeded but usage logging failed: session=%s provider=%s model=%s reason=%s",
+                                session_id,
+                                result.provider,
+                                result.model,
+                                log_exc,
+                            )
                     return result
                 except LLMError as e:
                     last_error = e

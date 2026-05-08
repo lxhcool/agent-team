@@ -13,7 +13,7 @@ import { useConfirm } from "@/components/ui/confirm-dialog";
 import { TopNav } from "./components/topnav";
 import { useAuth } from "@/lib/auth";
 
-type WorkspaceSummary = {
+type FlowSummary = {
   id: string; name: string; description: string | null; target_platform: string;
   current_stage: string; stage_total: number; stage_approved: number;
   created_at: string; updated_at: string;
@@ -46,7 +46,7 @@ const QUICK_TAGS: { label: string; content: string }[] = [
   { label: "做网站", content: "我想做一个品牌官网，需要展示公司介绍、服务内容、案例、联系方式，并且适配手机访问" },
   { label: "做小程序", content: "我想做一个预约类小程序，用户可以浏览服务、选择时间、提交预约，后台可以查看和处理预约" },
   { label: "做管理后台", content: "我想做一个内部管理后台，需要登录、数据看板、列表管理、详情编辑和权限控制" },
-  { label: "改现有项目", content: "我想在现有项目里新增一个功能，需要先分析需求、确认方案，再进入开发执行" },
+  { label: "改现有项目", content: "我想在现有项目里新增一个功能，需要先分析需求、确认范围、补齐方案和验收标准" },
 ];
 
 const ROUNDTABLE_PRESETS: { icon: string; title: string; desc: string; agents: { emoji: string; name: string; agentKey: string }[]; content: string; participants: string[] }[] = [
@@ -94,26 +94,26 @@ export default function HomePage() {
   const router = useRouter();
   const { confirm, ConfirmDialog } = useConfirm();
   const { loading: authLoading } = useAuth();
-  const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
+  const [flows, setFlows] = useState<FlowSummary[]>([]);
   const [roundtables, setRoundtables] = useState<RoundtableSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [quickInput, setQuickInput] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
   const [starting, setStarting] = useState(false);
-  const [mode, setMode] = useState<"workspace" | "roundtable">("workspace");
+  const [mode, setMode] = useState<"flow" | "roundtable">("flow");
   const [composing, setComposing] = useState(false);
   const [presetParticipants, setPresetParticipants] = useState<string[] | null>(null);
 
   useEffect(() => {
     Promise.all([
-      fetch("/api/workspaces").then((r) => r.json()).catch(() => []),
+      fetch("/api/flows").then((r) => r.json()).catch(() => []),
       fetch("/api/roundtable-sessions").then((r) => r.json()).catch(() => []),
     ])
-      .then(([wData, rData]) => { setWorkspaces(wData); setRoundtables(rData); setLoading(false); })
+      .then(([flowData, rData]) => { setFlows(flowData); setRoundtables(rData); setLoading(false); })
       .catch(() => setLoading(false));
   }, []);
 
-  const makeWorkspaceName = (text: string) => {
+  const makeFlowName = (text: string) => {
     const firstLine = text.trim().split(/\n/)[0] || text.trim();
     return firstLine.replace(/^我(想|需要|要)/, "").slice(0, 28) || "新项目";
   };
@@ -137,20 +137,20 @@ export default function HomePage() {
           }
         } else { setErrorMsg("创建圆桌讨论失败"); }
       } else {
-        const workspaceRes = await fetch("/api/workspaces", {
+        const flowRes = await fetch("/api/flows", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            name: makeWorkspaceName(quickInput),
+            name: makeFlowName(quickInput),
             description: quickInput.trim(),
             target_platform: "website",
           }),
         });
-        if (!workspaceRes.ok) {
-          const data = await workspaceRes.json().catch(() => ({}));
-          throw new Error(data.detail || "创建工作区失败");
+        if (!flowRes.ok) {
+          const data = await flowRes.json().catch(() => ({}));
+          throw new Error(data.detail || "创建流程失败");
         }
-        const workspace = await workspaceRes.json();
-        router.push(`/workspaces/${workspace.id}`);
+        const flow = await flowRes.json();
+        router.push(`/flows/${flow.id}`);
       }
     } catch (err: any) { setErrorMsg(err.message || "无法连接后端服务"); } finally { setStarting(false); }
   };
@@ -194,10 +194,10 @@ export default function HomePage() {
             <div className="relative">
               <div className="text-center mb-6">
                 <h1 className="text-3xl font-bold tracking-tight sm:text-4xl text-slate-900 dark:text-slate-100">
-                  输入目标，<span className="bg-gradient-to-r from-indigo-500 to-violet-500 bg-clip-text text-transparent">创建工作区</span>
+                  输入需求，<span className="bg-gradient-to-r from-indigo-500 to-violet-500 bg-clip-text text-transparent">推进交付定稿</span>
                 </h1>
                 <p className="mx-auto mt-2 max-w-lg text-sm text-slate-500 dark:text-slate-400">
-                  首页负责新需求入口。描述你想做的网站、小程序或改动，之后在工作区里一步步确认需求、产品、UI、技术方案和开发计划。
+                  从一句话需求或已有材料开始，逐步确认需求、范围、方案、实现准备和验收口径，让团队更快进入可开工状态。
                 </p>
               </div>
 
@@ -208,10 +208,10 @@ export default function HomePage() {
                   <div className="flex items-center justify-between px-4 pt-3 pb-3">
                     <div className="flex gap-1">
                       <button
-                        onClick={() => { setMode("workspace"); setErrorMsg(""); setPresetParticipants(null); }}
-                        className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all cursor-pointer ${mode === "workspace" ? "bg-indigo-50 dark:bg-indigo-500/15 text-indigo-600 dark:text-indigo-300" : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"}`}
+                        onClick={() => { setMode("flow"); setErrorMsg(""); setPresetParticipants(null); }}
+                        className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all cursor-pointer ${mode === "flow" ? "bg-indigo-50 dark:bg-indigo-500/15 text-indigo-600 dark:text-indigo-300" : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"}`}
                       >
-                        <Sparkles size={12} />项目工作区
+                        <Sparkles size={12} />项目流程
                       </button>
                       <button
                         onClick={() => { setMode("roundtable"); setErrorMsg(""); setPresetParticipants(null); }}
@@ -220,9 +220,9 @@ export default function HomePage() {
                         <UsersRound size={12} />圆桌讨论
                       </button>
                     </div>
-                    <div className={`flex items-center gap-1.5 text-xs font-medium ${mode === "workspace" ? "text-indigo-500" : "text-emerald-500"}`}>
-                      {mode === "workspace" ? <Sparkles size={12} /> : <UsersRound size={12} />}
-                      {mode === "workspace" ? "创建项目并进入阶段确认" : "多人讨论"}
+                      <div className={`flex items-center gap-1.5 text-xs font-medium ${mode === "flow" ? "text-indigo-500" : "text-emerald-500"}`}>
+                      {mode === "flow" ? <Sparkles size={12} /> : <UsersRound size={12} />}
+                      {mode === "flow" ? "直接进入阶段对话" : "多人讨论"}
                     </div>
                   </div>
                   {/* Textarea */}
@@ -233,7 +233,7 @@ export default function HomePage() {
                       onCompositionStart={() => setComposing(true)}
                       onCompositionEnd={() => setComposing(false)}
                       onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !composing && !e.nativeEvent.isComposing && quickInput.trim() && !starting) { e.preventDefault(); handleQuickStart(); } }}
-                      placeholder={mode === "workspace" ? "描述你想做什么，例如：\n我想做一个宠物店预约小程序，支持服务展示、在线预约、后台处理预约..." : "输入一个有趣的话题，让 AI 们展开讨论...\n也可以点击下方的预设模式快速开始"}
+                      placeholder={mode === "flow" ? "描述你的新项目需求，或说明这次迭代要改什么，例如：\n我想做一个宠物店预约小程序，支持服务展示、在线预约、后台处理预约..." : "输入一个有趣的话题，让 AI 们展开讨论...\n也可以点击下方的预设模式快速开始"}
                       rows={4}
                       className="w-full resize-none bg-transparent text-sm text-slate-700 dark:text-slate-200 placeholder:text-slate-400/70 dark:placeholder:text-slate-500/70 outline-none leading-relaxed"
                     />
@@ -243,15 +243,15 @@ export default function HomePage() {
                     <span className="text-[11px] text-slate-400 dark:text-slate-500">Shift + Enter 换行</span>
                     <button
                       onClick={handleQuickStart} disabled={!quickInput.trim() || starting}
-                      className={`flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-medium text-white shadow-md transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer active:scale-[0.97] ${mode === "workspace" ? "bg-gradient-to-r from-indigo-600 to-violet-600 shadow-indigo-500/25 hover:from-indigo-700 hover:to-violet-700" : "bg-gradient-to-r from-emerald-600 to-teal-600 shadow-emerald-500/25 hover:from-emerald-700 hover:to-teal-700"}`}
+                      className={`flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-medium text-white shadow-md transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer active:scale-[0.97] ${mode === "flow" ? "bg-gradient-to-r from-indigo-600 to-violet-600 shadow-indigo-500/25 hover:from-indigo-700 hover:to-violet-700" : "bg-gradient-to-r from-emerald-600 to-teal-600 shadow-emerald-500/25 hover:from-emerald-700 hover:to-teal-700"}`}
                     >
                       {starting ? <Loader2 size={16} className="animate-spin" /> : <Zap size={16} />}
-                      {starting ? "处理中" : mode === "workspace" ? "创建工作区" : "发起讨论"}
+                      {starting ? "处理中" : mode === "flow" ? "开始分析" : "发起讨论"}
                     </button>
                   </div>
                 </div>
                 {/* Quick Tags / Roundtable Presets */}
-                {mode === "workspace" ? (
+                {mode === "flow" ? (
                   <div className="mt-3 flex items-center justify-center gap-2 py-1">
                     {QUICK_TAGS.map((tag) => (
                       <button
@@ -301,34 +301,34 @@ export default function HomePage() {
                     <div className="flex size-5 items-center justify-center rounded-md bg-violet-100 dark:bg-violet-500/15">
                       <Sparkles size={11} className="text-violet-600 dark:text-violet-400" />
                     </div>
-                    最近工作区
+                    最近流程
                   </h2>
-                  <Link href="/workspaces" className="flex items-center gap-0.5 text-xs text-slate-400 dark:text-slate-500 hover:text-violet-500 dark:hover:text-violet-400 transition-colors duration-200 cursor-pointer">
+                  <Link href="/flows" className="flex items-center gap-0.5 text-xs text-slate-400 dark:text-slate-500 hover:text-violet-500 dark:hover:text-violet-400 transition-colors duration-200 cursor-pointer">
                     查看全部 <ChevronRight size={12} />
                   </Link>
                 </div>
-                {workspaces.length === 0 ? (
+                {flows.length === 0 ? (
                   <div className="rounded-xl bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm ring-1 ring-slate-200/60 dark:ring-slate-700/40 px-4 py-4 text-sm text-slate-400 dark:text-slate-500">
-                    在上方输入目标后，会自动创建第一个项目工作区。
+                    在上方输入一句话后，会自动创建第一条流程。
                   </div>
                 ) : (
                   <div className="grid gap-3 md:grid-cols-3">
-                    {workspaces.slice(0, 3).map((workspace) => {
-                      const progress = workspace.stage_total
-                        ? Math.round((workspace.stage_approved / workspace.stage_total) * 100)
+                    {flows.slice(0, 3).map((flow) => {
+                      const progress = flow.stage_total
+                        ? Math.round((flow.stage_approved / flow.stage_total) * 100)
                         : 0;
                       return (
                         <Link
-                          key={workspace.id}
-                          href={`/workspaces/${workspace.id}`}
+                          key={flow.id}
+                          href={`/flows/${flow.id}`}
                           className="rounded-xl bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm ring-1 ring-slate-200/60 dark:ring-slate-700/40 px-4 py-4 transition-all hover:ring-violet-300 dark:hover:ring-violet-500/40"
                         >
-                          <div className="mb-1 truncate text-sm font-semibold text-slate-800 dark:text-slate-100">{workspace.name}</div>
+                          <div className="mb-1 truncate text-sm font-semibold text-slate-800 dark:text-slate-100">{flow.name}</div>
                           <div className="line-clamp-2 min-h-[34px] text-xs leading-5 text-slate-500 dark:text-slate-400">
-                            {workspace.description || "等待补充项目目标"}
+                            {flow.description || "等待补充项目目标"}
                           </div>
                           <div className="mt-3 flex items-center justify-between text-[11px] text-slate-400 dark:text-slate-500">
-                            <span>{workspace.target_platform}</span>
+                            <span>{flow.target_platform}</span>
                             <span>{progress}% 已确认</span>
                           </div>
                           <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">

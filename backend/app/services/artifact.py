@@ -1,8 +1,8 @@
-"""Artifact Service - manages proposal.md and execution_plan.json generation and storage.
+"""Artifact Service - manages proposal and planning summary artifacts.
 
 Core objects:
 - ProposalRenderer: renders agent discussion results into structured proposal.md
-- ExecutionPlanSerializer: serializes Task records into standard execution_plan.json
+- PlanningSummarySerializer: serializes internal tasks into a handoff-ready summary
 - ArtifactService: orchestrates creation, storage, and retrieval of artifacts
 """
 
@@ -97,8 +97,8 @@ class ProposalRenderer:
         return "\n".join(parts)
 
 
-class ExecutionPlanSerializer:
-    """Serializes Task records into standard execution_plan.json."""
+class PlanningSummarySerializer:
+    """Serializes Task records into a handoff-ready planning summary."""
 
     @staticmethod
     def serialize(
@@ -106,7 +106,7 @@ class ExecutionPlanSerializer:
         tasks: List[Task],
         proposal_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Serialize tasks into the standard execution_plan.json structure.
+        """Serialize tasks into a planning summary JSON structure.
 
         Args:
             session: The PlanningSession ORM object.
@@ -114,7 +114,7 @@ class ExecutionPlanSerializer:
             proposal_id: Optional proposal artifact ID.
 
         Returns:
-            Dict representing execution_plan.json content.
+            Dict representing the planning summary content.
         """
         now = datetime.now(timezone.utc).isoformat()
 
@@ -136,31 +136,23 @@ class ExecutionPlanSerializer:
                 "task_id": t.id,
                 "title": t.title,
                 "description": t.description or "",
-                "owner_role": t.owner_role or t.assigned_agent or "developer",
-                "target_paths": target_paths,
-                "steps": [],
-                "validation_commands": val_cmds,
-                "expected_artifacts": [],
-                "done_definition": f"Task '{t.title}' completed successfully",
-                "risk_level": "medium",
+                "owner_role": t.owner_role or t.assigned_agent or "collaborator",
+                "scope": target_paths,
+                "acceptance_notes": val_cmds,
                 "dependencies": deps,
             })
 
         plan = {
-            "plan_id": f"plan_{session.id}",
+            "summary_id": f"summary_{session.id}",
             "source_session_id": session.id,
             "proposal_id": proposal_id or session.id,
             "title": session.title,
             "goal": session.input_text[:200] if session.input_text else "",
             "summary": session.summary or "",
-            "tasks": task_list,
-            "dependencies": [],
-            "target_paths": sorted(all_target_paths),
-            "constraints": [],
-            "validation_commands": all_validation_commands,
-            "expected_artifacts": ["proposal.md", "execution_result.json"],
-            "approval_requirements": [],
-            "stop_conditions": ["high risk action requested"],
+            "handoff_items": task_list,
+            "scope_paths": sorted(all_target_paths),
+            "acceptance_notes": all_validation_commands,
+            "expected_artifacts": ["proposal.md", "planning_summary.json"],
             "metadata": {
                 "created_at": now,
                 "version": "1.0.0",
@@ -259,18 +251,18 @@ class ArtifactService:
         plan_data: Dict[str, Any],
         created_by: str = "leader",
     ) -> Artifact:
-        """Create an execution_plan.json artifact for a session.
+        """Create a planning_summary.json artifact for a session.
 
         Args:
             session_id: The planning session ID.
-            plan_data: The execution plan dict.
-            created_by: Agent name that created the plan.
+            plan_data: The planning summary dict.
+            created_by: Agent name that created the summary.
 
         Returns:
             The Artifact ORM object (saved to DB).
         """
         dir_path = self._ensure_dir(session_id)
-        filename = "execution_plan.json"
+        filename = "planning_summary.json"
         file_path = dir_path / filename
 
         content = json.dumps(plan_data, ensure_ascii=False, indent=2)
@@ -285,7 +277,7 @@ class ArtifactService:
             result = await db.execute(
                 select(Artifact).where(
                     Artifact.session_id == session_id,
-                    Artifact.artifact_type == "execution_plan",
+                    Artifact.artifact_type == "planning_summary",
                 )
             )
             existing = result.scalars().first()
@@ -304,7 +296,7 @@ class ArtifactService:
             artifact = Artifact(
                 session_type="planning",
                 session_id=session_id,
-                artifact_type="execution_plan",
+                artifact_type="planning_summary",
                 filename=filename,
                 path=str(file_path),
                 mime_type="application/json",
@@ -371,7 +363,7 @@ class ArtifactService:
         )
 
     async def generate_execution_plan(self, session_id: str) -> Optional[Artifact]:
-        """Generate an execution_plan.json artifact from the session's tasks.
+        """Generate a planning summary artifact from the session's tasks.
 
         Args:
             session_id: The planning session ID.
@@ -405,7 +397,7 @@ class ArtifactService:
             proposal_id = proposal_artifact.id if proposal_artifact else None
 
         # Serialize
-        plan_data = ExecutionPlanSerializer.serialize(
+        plan_data = PlanningSummarySerializer.serialize(
             session=session,
             tasks=list(tasks),
             proposal_id=proposal_id,
@@ -444,19 +436,19 @@ class ArtifactService:
         return file_path.read_text(encoding="utf-8")
 
     async def get_execution_plan(self, session_id: str) -> Optional[Dict[str, Any]]:
-        """Read the execution_plan.json content for a session.
+        """Read the planning summary content for a session.
 
         Args:
             session_id: The planning session ID.
 
         Returns:
-            The execution plan dict, or None.
+            The planning summary dict, or None.
         """
         async with async_session() as db:
             result = await db.execute(
                 select(Artifact).where(
                     Artifact.session_id == session_id,
-                    Artifact.artifact_type == "execution_plan",
+                    Artifact.artifact_type == "planning_summary",
                 )
             )
             artifact = result.scalars().first()

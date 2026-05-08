@@ -342,7 +342,7 @@ class PlanningOrchestrator:
             # Leader announces approval
             await leader.save_message(
                 session_id,
-                "方案已通过审批，现在开始制定执行计划。",
+                "方案已通过审批，现在开始整理交接清单。",
                 message_type=MessageType.CHAT,
                 category="coordination",
             )
@@ -351,10 +351,10 @@ class PlanningOrchestrator:
             await self._update_status(session_id, PlanningStatus.GENERATING_PLAN)
             plan_text, tasks = await leader.run_plan(session_id, proposal)
 
-            # Reviewer reviews the execution plan
+            # Reviewer reviews the handoff summary
             await leader.save_message(
                 session_id,
-                "执行计划已生成，请 Reviewer 审查计划的完整性和可行性。",
+                "交接清单已生成，请 Reviewer 审查其完整性和可行性。",
                 message_type=MessageType.CHAT,
                 category="coordination",
             )
@@ -363,10 +363,10 @@ class PlanningOrchestrator:
             # If reviewer says NEEDS_REVISION, refine the plan
             plan_verdict = ReviewerAgent.parse_verdict(plan_review)
             if plan_verdict == "NEEDS_REVISION" and plan_review:
-                leader.emit_status(session_id, "refining_plan", "正在根据审查意见优化执行计划...")
+                leader.emit_status(session_id, "refining_plan", "正在根据审查意见优化交接清单...")
                 await leader.save_message(
                     session_id,
-                    "执行计划审查发现不足，正在修改...",
+                    "交接清单审查发现不足，正在修改...",
                     message_type=MessageType.CHAT,
                     category="coordination",
                 )
@@ -408,7 +408,7 @@ class PlanningOrchestrator:
                     except (json.JSONDecodeError, Exception) as e:
                         logger.warning(f"Failed to re-parse refined plan: {e}")
 
-            # Generate artifacts (proposal.md + execution_plan.json)
+            # Generate artifacts (proposal.md + planning_summary.json)
             try:
                 from app.services.artifact import artifact_service
                 await artifact_service.generate_proposal(session_id)
@@ -424,7 +424,7 @@ class PlanningOrchestrator:
             await self._update_status(session_id, PlanningStatus.READY_FOR_EXPORT)
 
             # Record checkpoint
-            await self._save_checkpoint(session_id, "business", "plan_ready", "Execution plan generated, ready for export")
+            await self._save_checkpoint(session_id, "business", "summary_ready", "Planning summary generated, ready for export")
 
             # Auto-transition to COMPLETED since export is available
             await self._update_status(session_id, PlanningStatus.COMPLETED)

@@ -1,8 +1,9 @@
 """Database setup and session management."""
 
 import logging
+import sqlite3
 
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -13,7 +14,18 @@ logger = logging.getLogger(__name__)
 engine = create_async_engine(
     settings.database_url,
     echo=settings.debug,
+    connect_args={"timeout": 30},
 )
+
+
+@event.listens_for(engine.sync_engine, "connect")
+def _configure_sqlite(dbapi_connection, _connection_record):
+    if isinstance(dbapi_connection, sqlite3.Connection):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL;")
+        cursor.execute("PRAGMA busy_timeout=30000;")
+        cursor.execute("PRAGMA synchronous=NORMAL;")
+        cursor.close()
 
 async_session = async_sessionmaker(
     engine,
@@ -45,12 +57,6 @@ async def _migrate_schema():
             ("ALTER TABLE model_settings ADD COLUMN user_id VARCHAR(36) DEFAULT 'system'", "model_settings", "user_id"),
             # PlanningSession: bind planning workflows to product workspaces
             ("ALTER TABLE planning_sessions ADD COLUMN workspace_id VARCHAR(36)", "planning_sessions", "workspace_id"),
-            # Workspace: storage mode for local/server managed directories
-            ("ALTER TABLE workspaces ADD COLUMN storage_mode VARCHAR(30) DEFAULT 'server'", "workspaces", "storage_mode"),
-            # Workspace: user-selected local root path
-            ("ALTER TABLE workspaces ADD COLUMN root_path TEXT", "workspaces", "root_path"),
-            # Workspace: durable local-directory binding identity
-            ("ALTER TABLE workspaces ADD COLUMN binding_id VARCHAR(80)", "workspaces", "binding_id"),
         ]
 
         for sql, table, column in migrations:

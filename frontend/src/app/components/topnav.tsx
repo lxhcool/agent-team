@@ -4,16 +4,15 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
 import {
-  LayoutDashboard, MessageCircle, UsersRound, Users,
+  House, UsersRound, Users,
   Wrench, BarChart3, Settings, Sun, Moon, LogOut, UserCircle,
   ChevronDown, FolderKanban
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 
 const NAV = [
-  { href: "/", label: "工作台", icon: LayoutDashboard },
-  { href: "/workspaces", label: "工作区", icon: FolderKanban },
-  { href: "/sessions", label: "Planning", icon: MessageCircle },
+  { href: "/", label: "首页", icon: House, match: ["/"] },
+  { href: "/flows", label: "项目流程", icon: FolderKanban, match: ["/flows", "/workspaces"] },
   { href: "/roundtable", label: "圆桌讨论", icon: UsersRound },
 ];
 
@@ -68,8 +67,13 @@ export function TopNav() {
     document.documentElement.classList.toggle("light", n === "light");
   };
 
-  const active = (h: string) => h === "/" ? pathname === "/" : pathname.startsWith(h);
-  const settingsActive = SETTINGS_NAV.some(i => active(i.href));
+  const active = (item: { href: string; match?: string[] }) => {
+    if (item.match?.length) {
+      return item.match.some((prefix) => prefix === "/" ? pathname === "/" : pathname.startsWith(prefix));
+    }
+    return item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+  };
+  const settingsActive = SETTINGS_NAV.some(i => active({ href: i.href }));
 
   return (
     <header className="desktop-drag-region fixed top-0 left-0 right-0 z-50 border-b border-slate-200/60 dark:border-slate-700/40 bg-white/70 dark:bg-slate-900/70 backdrop-blur-xl">
@@ -83,10 +87,10 @@ export function TopNav() {
         {/* Main Nav */}
         <nav className="ml-8 flex items-center gap-1">
           {NAV.map(item => {
-            const on = active(item.href);
+            const on = active(item);
             return (
               <Link
-                key={item.href}
+                key={`${item.href}-${item.label}`}
                 href={item.href}
                 className={`flex items-center gap-2 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors duration-150 ${
                   on
@@ -121,7 +125,7 @@ export function TopNav() {
                 className="absolute left-0 top-full mt-1.5 z-50 min-w-[160px] rounded-xl border p-1 bg-white/95 dark:bg-slate-900/95 border-slate-200 dark:border-slate-700 shadow-xl backdrop-blur-xl"
               >
                 {SETTINGS_NAV.map(item => {
-                  const on = active(item.href);
+                  const on = active({ href: item.href });
                   return (
                     <Link
                       key={item.href}

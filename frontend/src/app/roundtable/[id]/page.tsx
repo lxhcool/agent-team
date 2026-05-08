@@ -409,18 +409,13 @@ export default function RoundtablePage() {
   }, [id, reloadSession]);
 
   const handlePromote = useCallback(async () => {
-    if (!await confirm({ title: "转为 Planning Session", description: "确认将此圆桌讨论转为 Planning Session？讨论结果将作为规划的输入。" })) return;
+    if (!await confirm({ title: "结束讨论并回到首页", description: "确认结束本次讨论？结束后你可以直接回首页输入需求，进入正式流程。" })) return;
     setActionLoading("promote");
     try {
-      const res = await fetch(`/api/roundtable-sessions/${id}/promote`, { method: "POST" });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.planning_session_id) {
-          // Auto-start the planning session after promotion
-          await fetch(`/api/planning-sessions/${data.planning_session_id}/start`, { method: "POST" });
-          router.push(`/sessions/${data.planning_session_id}`);
-        } else await reloadSession();
-      } else alert("转换失败，请稍后重试");
+      await fetch(`/api/roundtable-sessions/${id}/complete`, { method: "POST" });
+      await reloadSession();
+      alert("讨论已结束。请回首页继续输入需求并进入流程。");
+      router.push("/");
     } catch {}
     finally { setActionLoading(null); }
   }, [id, reloadSession, router]);

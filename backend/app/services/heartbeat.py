@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import OperationalError
 
 from app.core.database import async_session
 from app.models.models import AgentHeartbeat
@@ -45,8 +46,12 @@ class HeartbeatService:
                 existing.agent_type = agent_type
                 existing.heartbeat_at = now
                 existing.status = "idle"
-                await db.commit()
-                await db.refresh(existing)
+                try:
+                    await db.commit()
+                    await db.refresh(existing)
+                except OperationalError as exc:
+                    await db.rollback()
+                    logger.warning("heartbeat register skipped because database is locked: agent=%s reason=%s", agent_name, exc)
                 return existing
 
             hb = AgentHeartbeat(
@@ -56,8 +61,12 @@ class HeartbeatService:
                 heartbeat_at=now,
             )
             db.add(hb)
-            await db.commit()
-            await db.refresh(hb)
+            try:
+                await db.commit()
+                await db.refresh(hb)
+            except OperationalError as exc:
+                await db.rollback()
+                logger.warning("heartbeat register skipped because database is locked: agent=%s reason=%s", agent_name, exc)
             return hb
 
     async def heartbeat(
@@ -100,8 +109,12 @@ class HeartbeatService:
             if status == "busy" or current_task_id:
                 hb.last_progress_at = now
 
-            await db.commit()
-            await db.refresh(hb)
+            try:
+                await db.commit()
+                await db.refresh(hb)
+            except OperationalError as exc:
+                await db.rollback()
+                logger.warning("heartbeat update skipped because database is locked: agent=%s reason=%s", agent_name, exc)
             return hb
 
     async def report_progress(
@@ -121,7 +134,11 @@ class HeartbeatService:
                 hb.heartbeat_at = now
                 if task_id:
                     hb.current_task_id = task_id
-                await db.commit()
+                try:
+                    await db.commit()
+                except OperationalError as exc:
+                    await db.rollback()
+                    logger.warning("heartbeat progress skipped because database is locked: agent=%s reason=%s", agent_name, exc)
 
     async def get_heartbeat(self, agent_name: str) -> Optional[AgentHeartbeat]:
         """Get the heartbeat record for an agent."""
@@ -171,7 +188,11 @@ class HeartbeatService:
                             db_hb = result.scalars().first()
                             if db_hb:
                                 db_hb.status = "unresponsive"
-                                await db.commit()
+                                try:
+                                    await db.commit()
+                                except OperationalError as exc:
+                                    await db.rollback()
+                                    logger.warning("heartbeat unresponsive mark skipped because database is locked: agent=%s reason=%s", hb.agent_name, exc)
 
             results.append({
                 "agent_name": hb.agent_name,
@@ -195,7 +216,11 @@ class HeartbeatService:
             hb = result.scalars().first()
             if hb:
                 await db.delete(hb)
-                await db.commit()
+                try:
+                    await db.commit()
+                except OperationalError as exc:
+                    await db.rollback()
+                    logger.warning("heartbeat unregister skipped because database is locked: agent=%s reason=%s", agent_name, exc)
 
 
 # Global singleton

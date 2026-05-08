@@ -14,10 +14,10 @@ from app.api import (
     planning,
     settings as settings_api,
     health,
+    flows,
     messages,
     agents,
     artifacts,
-    execution_results,
     usage,
     security,
     skills,
@@ -51,8 +51,11 @@ async def lifespan(app: FastAPI):
     await skill_registry.load_skills()
     # Register built-in agents in heartbeat
     from app.services.heartbeat import heartbeat_service
-    for agent_name in ["leader", "architect", "developer", "reviewer", "tester"]:
-        await heartbeat_service.register(agent_name, agent_type="server")
+    for agent_name in ["orchestrator", "requirements-analyst", "product-designer", "reviewer", "technical-architect"]:
+        try:
+            await heartbeat_service.register(agent_name, agent_type="server")
+        except Exception as exc:
+            logging.warning("heartbeat bootstrap skipped: agent=%s reason=%s", agent_name, exc)
     # Setup secure logging (SC-011: log desensitization)
     from app.services.security import setup_secure_logging
     setup_secure_logging()
@@ -91,6 +94,7 @@ app.add_middleware(
 
 app.include_router(auth.router, prefix="/api", tags=["auth"])
 app.include_router(health.router, prefix="/api", tags=["health"])
+app.include_router(flows.router, prefix="/api", tags=["flows"])
 app.include_router(workspaces.router, prefix="/api", tags=["workspaces"])
 app.include_router(planning.router, prefix="/api", tags=["planning"])
 app.include_router(messages.router, prefix="/api", tags=["messages"])
@@ -98,7 +102,6 @@ app.include_router(agents.router, prefix="/api/settings", tags=["agents"])
 app.include_router(agents.router_alias, prefix="/api", tags=["agent-templates"])
 app.include_router(settings_api.router, prefix="/api/settings", tags=["settings"])
 app.include_router(artifacts.router, prefix="/api", tags=["artifacts"])
-app.include_router(execution_results.router, prefix="/api", tags=["execution-results"])
 app.include_router(usage.router, prefix="/api", tags=["usage"])
 app.include_router(security.router, prefix="/api/settings", tags=["security"])
 app.include_router(skills.router, prefix="/api/settings", tags=["skills"])

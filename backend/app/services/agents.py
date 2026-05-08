@@ -613,33 +613,30 @@ class LeaderAgent(BaseAgent):
 
 请用中文回答，使用 Markdown 格式，方案要具体可执行。"""
 
-    PLAN_SYSTEM_PROMPT = """你是一个项目计划专家。根据已审批的技术方案，生成一份详细的执行计划，格式为 JSON：
+    PLAN_SYSTEM_PROMPT = """你是一个交付整理专家。根据已审批的技术方案，生成一份详细的交接清单，格式为 JSON：
 
 生成一个任务列表，每个任务包含：
 - title: 任务标题
 - description: 任务详细描述
-- assigned_agent: 负责的 Agent 角色（如 architect, developer, tester）
+- assigned_agent: 负责的 Agent 角色（如 analyst, spec_writer, reviewer）
 - dependencies: 依赖的任务序号列表（从0开始）
 - target_paths: 涉及的文件路径列表
-- validation_commands: 验证命令列表
-- risk_level: 风险等级（low/medium/high）
+- validation_commands: 可作为验收或交接提醒的要点列表
 
-安全约束：
-- 不要生成删除系统文件的命令（如 rm -rf /）
-- 不要修改敏感文件（.env, *.key, *.pem, credentials 等）
-- 验证命令应使用只读操作（如 pytest, eslint, tsc --noEmit）
-- 涉及文件写入的任务应标记 risk_level: medium 或 high
+边界约束：
+- 不要输出代码执行命令
+- 不要把任务写成自动改仓库流程
+- 要聚焦交接、范围、依赖、验收口径和待确认项
 
 请直接输出 JSON 数组，不要包含其他内容。格式示例：
 [
   {
-    "title": "设计数据库模型",
-    "description": "定义 SQLAlchemy 模型...",
-    "assigned_agent": "architect",
+    "title": "整理实现准备说明",
+    "description": "汇总模块边界、依赖和验收标准...",
+    "assigned_agent": "spec_writer",
     "dependencies": [],
-    "target_paths": ["backend/app/models/"],
-    "validation_commands": ["python -c 'from app.models import *'"],
-    "risk_level": "low"
+    "target_paths": ["模块说明", "接口约束", "验收标准"],
+    "validation_commands": ["确认是否还有未明确依赖"]
   }
 ]"""
 
@@ -650,16 +647,16 @@ class LeaderAgent(BaseAgent):
             llm_router=llm_router,
             event_bus=event_bus,
             role="coordinator",
-            goal="协调 Agent 团队完成需求分析、技术方案生成和执行计划制定",
+            goal="协调 Agent 团队完成需求分析、技术方案生成和交接清单整理",
             system_prompt=self.ANALYSIS_SYSTEM_PROMPT,
             model=model,
             provider=provider,
             capabilities=[
                 {"name": "requirement_analysis", "description": "需求分析"},
                 {"name": "proposal_generation", "description": "方案生成"},
-                {"name": "plan_generation", "description": "计划生成"},
+                {"name": "handoff_generation", "description": "交接清单整理"},
             ],
-            constraints=["必须先完成需求分析再生成方案", "方案需要用户审批后才能生成执行计划"],
+            constraints=["必须先完成需求分析再生成方案", "方案需要用户审批后才能生成交接清单"],
             participation_modes=["planning"],
         )
 
@@ -734,13 +731,13 @@ class LeaderAgent(BaseAgent):
         return proposal_text
 
     async def run_plan(self, session_id: str, proposal: str):
-        """Phase 3: Generate execution plan from approved proposal."""
-        self.emit_status(session_id, "generating_plan", "正在生成执行计划...")
+        """Phase 3: Generate handoff checklist from approved proposal."""
+        self.emit_status(session_id, "generating_plan", "正在整理交接清单...")
         self.emit_typing(session_id, True)
 
         messages = [
             LLMMessage(role="system", content=self.PLAN_SYSTEM_PROMPT),
-            LLMMessage(role="user", content=f"已审批的技术方案：\n{proposal}\n\n请生成执行计划。"),
+            LLMMessage(role="user", content=f"已审批的技术方案：\n{proposal}\n\n请生成交接清单。"),
         ]
 
         plan_text = await self.call_llm(messages, session_id, max_tokens=4096, temperature=0.3)
@@ -755,13 +752,13 @@ class LeaderAgent(BaseAgent):
                     text = text[4:]
             tasks_data = json.loads(text)
         except json.JSONDecodeError:
-            tasks_data = [{"title": "执行计划", "description": plan_text, "assigned_agent": "developer", "dependencies": []}]
+            tasks_data = [{"title": "交接清单", "description": plan_text, "assigned_agent": "spec_writer", "dependencies": []}]
 
         # Save plan as message
         msg = await self.save_message(
             session_id, plan_text,
             message_type=MessageType.PLAN,
-            category="execution_plan",
+            category="planning_summary",
         )
         self.emit_message(session_id, msg)
 
@@ -846,15 +843,15 @@ class LeaderAgent(BaseAgent):
     async def _refine_plan_with_review(
         self, session_id: str, plan_text: str, review: str
     ) -> Optional[str]:
-        """Refine the execution plan based on reviewer feedback."""
+        """Refine the handoff checklist based on reviewer feedback."""
         self.emit_typing(session_id, True)
 
         messages = [
             LLMMessage(role="system", content=self.PLAN_SYSTEM_PROMPT),
             LLMMessage(role="user", content=(
-                f"原始执行计划：\n{plan_text}\n\n"
+                f"原始交接清单：\n{plan_text}\n\n"
                 f"审查意见：\n{review}\n\n"
-                f"请根据审查意见优化执行计划，保留合理的任务分解，改进指出的问题。"
+                f"请根据审查意见优化交接清单，保留合理的任务分解，改进指出的问题。"
                 f"输出格式与原始计划相同（JSON 数组）。"
             )),
         ]
@@ -874,7 +871,7 @@ class LeaderAgent(BaseAgent):
             msg = await self.save_message(
                 session_id, refined_text,
                 message_type=MessageType.PLAN,
-                category="execution_plan_refined",
+                category="planning_summary_refined",
             )
             self.emit_message(session_id, msg)
 
@@ -964,7 +961,7 @@ class ResearcherAgent(BaseAgent):
                 {"name": "risk_identification", "description": "风险识别"},
                 {"tools": ["web_search", "file_read", "file_list"]},
             ],
-            constraints=["只做分析和调研，不生成执行计划"],
+            constraints=["只做分析和调研，不生成交接清单"],
             participation_modes=["planning", "roundtable"],
             risk_level="low",
         )
@@ -1090,7 +1087,7 @@ class ReviewerAgent(BaseAgent):
         self.emit_status(session_id, "reviewing", "正在审查...")
         self.emit_typing(session_id, True)
 
-        type_label = "技术方案" if review_type == "proposal" else "执行计划" if review_type == "plan" else "代码"
+        type_label = "技术方案" if review_type == "proposal" else "交接清单" if review_type == "plan" else "代码"
         messages = [
             LLMMessage(role="system", content=self.REVIEW_SYSTEM_PROMPT),
             LLMMessage(role="user", content=f"请审查以下{type_label}：\n\n{content}"),
