@@ -319,10 +319,9 @@ export default function FlowDetailPage() {
 
   const currentMeta = selectedStage ? STAGE_META[selectedStage.stage_key] : null;
   const liveStreamState = selectedStage ? streamByStage[selectedStage.stage_key] || null : null;
+  const currentStageStoredMessages = selectedStage ? messagesByStage[selectedStage.stage_key] : undefined;
   const currentStageMessages = selectedStage
-    ? (messagesByStage[selectedStage.stage_key]?.length
-        ? messagesByStage[selectedStage.stage_key]
-        : buildFallbackMessages(selectedStage))
+    ? (currentStageStoredMessages !== undefined ? currentStageStoredMessages : buildFallbackMessages(selectedStage))
     : [];
   const hasStageConclusion = currentStageMessages.some((message) => message.kind === "conclusion");
 
@@ -552,6 +551,9 @@ export default function FlowDetailPage() {
   useEffect(() => {
     if (!selectedStage || messagesLoading || sending) return;
     const stageKey = selectedStage.stage_key;
+    if (!loadedStageKeysRef.current.has(stageKey)) {
+      return;
+    }
     const stageMessages = messagesByStage[stageKey] || [];
     const hasAssistant = stageMessages.some((item) => item.role === "assistant" && item.content.trim());
     const isCurrentStage = flow?.current_stage === stageKey;
@@ -563,7 +565,11 @@ export default function FlowDetailPage() {
     setSending(true);
     setError("");
     void consumeStageStream(stageKey, `/api/flows/${flowId}/stages/${stageKey}/bootstrap-stream`)
-      .catch((err: any) => {
+      .catch(async (err: any) => {
+        if (err?.message === "当前阶段已经有生成内容") {
+          await loadStageMessages(stageKey, true);
+          return;
+        }
         setError(err.message || "阶段启动失败");
       })
       .finally(() => {
