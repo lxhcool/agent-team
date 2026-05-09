@@ -46,6 +46,24 @@ def sanitize_llm_artifact(payload: Dict[str, Any]) -> tuple[Dict[str, Any], str]
     selected_option = str(recommendation.get("selected_option") or "").strip()
     if options and selected_option not in {item["title"] for item in options}:
         selected_option = next((item["title"] for item in options if item["recommended"]), options[0]["title"])
+    if not content and selected_option:
+        selected = next((item for item in options if item["title"] == selected_option), None)
+        if selected and selected.get("content"):
+            content = selected["content"]
+    if content and not options:
+        synthesized_title = selected_option or "当前方案"
+        options = [{
+            "title": synthesized_title,
+            "description": str(recommendation.get("summary") or "").strip(),
+            "content": content,
+            "recommended": True,
+        }]
+        selected_option = synthesized_title
+    elif content and options:
+        for item in options:
+            if not item["content"] and item["title"] == selected_option:
+                item["content"] = content
+                break
 
     sanitized = {
         "summary": str(recommendation.get("summary") or "AI 团队已生成本阶段推荐方案。"),
@@ -55,10 +73,6 @@ def sanitize_llm_artifact(payload: Dict[str, Any]) -> tuple[Dict[str, Any], str]
         "selected_option": selected_option or None,
         "artifacts": recommendation.get("artifacts") if isinstance(recommendation.get("artifacts"), list) else [],
     }
-    if not content and selected_option:
-        selected = next((item for item in options if item["title"] == selected_option), None)
-        if selected and selected.get("content"):
-            content = selected["content"]
     if not content:
         content = "AI 已生成推荐，但没有返回详细产物。请提交反馈后重新生成。"
     return sanitized, content
@@ -94,6 +108,15 @@ def finalize_recommendation(recommendation: Dict[str, Any], fallback_content: st
             selected_content = selected.get("content") or ""
     if not selected_content:
         selected_content = fallback_content
+    if selected_content and not options:
+        synthesized_title = selected_option or "当前方案"
+        options = [{
+            "title": synthesized_title,
+            "description": str(recommendation.get("summary") or "").strip(),
+            "content": selected_content,
+            "recommended": True,
+        }]
+        selected_option = synthesized_title
 
     recommendation["options"] = options
     recommendation["selected_option"] = selected_option or None
