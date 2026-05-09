@@ -53,12 +53,8 @@ def next_stage_key(stage_key: WorkspaceStageKey) -> Optional[WorkspaceStageKey]:
         WorkspaceStageKey.PRODUCT,
         WorkspaceStageKey.UI_DIRECTION,
         WorkspaceStageKey.TECHNICAL,
-        WorkspaceStageKey.DEVELOPMENT,
-        WorkspaceStageKey.ACCEPTANCE,
         WorkspaceStageKey.DEPLOYMENT,
     ]
-    if stage_key == WorkspaceStageKey.PROTOTYPE:
-        return WorkspaceStageKey.TECHNICAL
     try:
         index = main_flow.index(stage_key)
     except ValueError:

@@ -67,6 +67,7 @@ class ProviderAdapter:
         max_tokens: int = 4096,
         temperature: float = 0.7,
         stream: bool = False,
+        reasoning_effort: Optional[str] = None,
     ) -> LLMCallResult | AsyncIterator:
         """Call the LLM API in complete or stream mode."""
         start = time.time()
@@ -86,7 +87,10 @@ class ProviderAdapter:
             "temperature": temperature,
             "stream": stream,
         }
-        if self._is_reasoning_model(model):
+        selected_reasoning_effort = (reasoning_effort or "").strip().lower()
+        if selected_reasoning_effort and selected_reasoning_effort != "default":
+            payload["reasoning_effort"] = selected_reasoning_effort
+        elif self._is_reasoning_model(model):
             # Xiaomi MiMo and similar reasoning models may spend a long time in
             # hidden reasoning before producing content. Prefer low effort for
             # product workflow latency; unsupported providers generally ignore it.
@@ -135,7 +139,7 @@ class ProviderAdapter:
             prompt_tokens = usage.get("prompt_tokens", 0)
             completion_tokens = usage.get("completion_tokens", 0)
 
-            content = choice.get("message", {}).get("content") or ""
+            content = self._extract_choice_content(choice, data)
             was_truncated = choice.get("finish_reason") == "length"
             was_continued = False
 
@@ -152,18 +156,19 @@ class ProviderAdapter:
                 for _ in range(3):
                     try:
                         cont_resp = await client.post(url, headers=headers, json={
-                        "model": model,
-                        "messages": [{"role": m.role, "content": m.content} for m in continuation_messages],
-                        "max_tokens": max_tokens,
-                        "temperature": temperature,
-                    })
+                            "model": model,
+                            "messages": [{"role": m.role, "content": m.content} for m in continuation_messages],
+                            "max_tokens": max_tokens,
+                            "temperature": temperature,
+                            **({"reasoning_effort": payload["reasoning_effort"]} if "reasoning_effort" in payload else {}),
+                        })
                     except httpx.HTTPError:
                         break
                     if cont_resp.status_code != 200:
                         break
                     cont_data = cont_resp.json()
                     cont_choice = cont_data["choices"][0]
-                    cont_content = cont_choice.get("message", {}).get("content") or ""
+                    cont_content = self._extract_choice_content(cont_choice, cont_data)
                     content += cont_content
                     was_continued = True
 
@@ -221,18 +226,95 @@ class ProviderAdapter:
                             choices = data.get("choices", [])
                             if not choices:
                                 continue
-                            delta = choices[0].get("delta", {})
-                            content = delta.get("content")
+                            choice = choices[0]
+                            delta = choice.get("delta", {})
+                            content = self._extract_stream_text(delta.get("content"))
+                            if not content:
+                                content = self._extract_stream_text(delta.get("text"))
+                            if not content:
+                                content = self._extract_stream_text(delta.get("output_text"))
+                            if not content:
+                                content = self._extract_stream_text(choice.get("message", {}).get("content"))
+                            if not content:
+                                content = self._extract_stream_text(choice.get("message", {}).get("text"))
+                            if not content:
+                                content = self._extract_stream_text(choice.get("text"))
+                            if not content:
+                                content = self._extract_stream_text(choice.get("content"))
                             if content:
                                 yield {"type": "content", "content": content}
                                 continue
-                            reasoning_content = delta.get("reasoning_content")
+                            reasoning_content = self._extract_stream_text(delta.get("reasoning_content"))
+                            if not reasoning_content:
+                                reasoning_content = self._extract_stream_text(delta.get("reasoning"))
                             if reasoning_content:
                                 yield {"type": "reasoning", "content": reasoning_content}
                         except (json.JSONDecodeError, IndexError, KeyError):
                             continue
             except httpx.HTTPError as e:
                 raise LLMError(f"LLM stream request failed: {type(e).__name__}: {e}") from e
+
+    @staticmethod
+    def _extract_stream_text(value) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            parts: list[str] = []
+            for item in value:
+                if isinstance(item, str):
+                    parts.append(item)
+                    continue
+                if not isinstance(item, dict):
+                    continue
+                text = item.get("text")
+                if isinstance(text, str) and text:
+                    parts.append(text)
+                    continue
+                for key in ("content", "value", "output_text", "output", "answer"):
+                    nested = item.get(key)
+                    if isinstance(nested, str) and nested:
+                        parts.append(nested)
+                        break
+                    if isinstance(nested, (list, dict)):
+                        extracted = ProviderAdapter._extract_stream_text(nested)
+                        if extracted:
+                            parts.append(extracted)
+                            break
+            return "".join(parts)
+        if isinstance(value, dict):
+            for key in ("text", "content", "value", "output_text", "output", "answer"):
+                nested = value.get(key)
+                if isinstance(nested, str) and nested:
+                    return nested
+                if isinstance(nested, (list, dict)):
+                    extracted = ProviderAdapter._extract_stream_text(nested)
+                    if extracted:
+                        return extracted
+            for key in ("delta", "message"):
+                nested = value.get(key)
+                if isinstance(nested, (list, dict)):
+                    extracted = ProviderAdapter._extract_stream_text(nested)
+                    if extracted:
+                        return extracted
+        return ""
+
+    @staticmethod
+    def _extract_choice_content(choice, data=None) -> str:
+        if not isinstance(choice, dict):
+            return ""
+        for candidate in (
+            choice.get("message", {}).get("content") if isinstance(choice.get("message"), dict) else None,
+            choice.get("message", {}).get("text") if isinstance(choice.get("message"), dict) else None,
+            choice.get("text"),
+            choice.get("content"),
+            data.get("output_text") if isinstance(data, dict) else None,
+        ):
+            extracted = ProviderAdapter._extract_stream_text(candidate)
+            if extracted:
+                return extracted
+        return ""
 
     @staticmethod
     def _is_reasoning_model(model: str) -> bool:
@@ -349,6 +431,7 @@ class LLMRouter:
         session_type: str = "planning",
         agent_name: Optional[str] = None,
         budget_usd: Optional[float] = None,
+        reasoning_effort: Optional[str] = None,
     ) -> LLMCallResult:
         """
         Call an LLM with automatic provider routing, retry, and fallback.
@@ -441,6 +524,7 @@ class LLMRouter:
                         model=model_name,
                         max_tokens=max_tokens,
                         temperature=temperature,
+                        reasoning_effort=reasoning_effort,
                     )
                     # Log successful call
                     if session_id:

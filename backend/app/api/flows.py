@@ -1,13 +1,18 @@
 """Flow API endpoints."""
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.authz import get_user_from_query_token
 from app.api.flow_schemas import (
     CreateWorkspaceRequest,
     GenerateStageRequest,
     SendWorkspaceStageMessageRequest,
     StageFeedbackRequest,
+    StageRunSettingsRequest,
     UpdateStageRequest,
     UpdateWorkspaceRequest,
     WorkspaceResponse,
@@ -18,6 +23,7 @@ from app.core.auth import get_current_user
 from app.core.database import get_db
 from app.models.models import User, WorkspaceStageKey
 from app.api.workspaces import (
+    _download_all_workspace_artifacts_impl,
     approve_workspace_stage as approve_workspace_stage_impl,
     bootstrap_workspace_stage_stream as bootstrap_workspace_stage_stream_impl,
     create_workspace as create_workspace_impl,
@@ -29,6 +35,7 @@ from app.api.workspaces import (
     get_workspace_stage_messages as get_workspace_stage_messages_impl,
     list_workspace_stages as list_workspace_stages_impl,
     list_workspaces as list_workspaces_impl,
+    optional_bearer,
     request_stage_revision as request_stage_revision_impl,
     send_workspace_stage_message as send_workspace_stage_message_impl,
     stream_workspace_stage_message as stream_workspace_stage_message_impl,
@@ -63,6 +70,22 @@ async def get_flow(
     user: User = Depends(get_current_user),
 ):
     return await get_workspace_impl(workspace_id=workspace_id, db=db, user=user)
+
+
+@router.get("/flows/{workspace_id}/artifacts/download-all")
+async def download_all_flow_artifacts(
+    workspace_id: str,
+    token: Optional[str] = None,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(optional_bearer),
+    db: AsyncSession = Depends(get_db),
+):
+    auth_token = credentials.credentials if credentials else token
+    user = await get_user_from_query_token(db, auth_token)
+    return await _download_all_workspace_artifacts_impl(
+        workspace_id=workspace_id,
+        db=db,
+        user=user,
+    )
 
 
 @router.patch("/flows/{workspace_id}", response_model=WorkspaceResponse)
@@ -112,12 +135,14 @@ async def get_flow_stage_messages(
 async def bootstrap_flow_stage_stream(
     workspace_id: str,
     stage_key: WorkspaceStageKey,
+    req: Optional[StageRunSettingsRequest] = None,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     return await bootstrap_workspace_stage_stream_impl(
         workspace_id=workspace_id,
         stage_key=stage_key,
+        req=req,
         db=db,
         user=user,
     )
@@ -161,12 +186,14 @@ async def stream_flow_stage_message(
 async def finalize_flow_stage_stream(
     workspace_id: str,
     stage_key: WorkspaceStageKey,
+    req: Optional[StageRunSettingsRequest] = None,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     return await finalize_workspace_stage_stream_impl(
         workspace_id=workspace_id,
         stage_key=stage_key,
+        req=req,
         db=db,
         user=user,
     )
@@ -238,7 +265,7 @@ async def approve_flow_stage(
     )
 
 
-@router.post("/flows/{workspace_id}/stages/{stage_key}/request-revision", response_model=WorkspaceStageResponse)
+@router.post("/flows/{workspace_id}/stages/{stage_key}/request-revision", response_model=WorkspaceResponse)
 async def request_flow_stage_revision(
     workspace_id: str,
     stage_key: WorkspaceStageKey,

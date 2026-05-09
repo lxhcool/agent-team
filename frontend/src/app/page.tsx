@@ -197,7 +197,7 @@ export default function HomePage() {
                   输入需求，<span className="bg-gradient-to-r from-indigo-500 to-violet-500 bg-clip-text text-transparent">推进交付定稿</span>
                 </h1>
                 <p className="mx-auto mt-2 max-w-lg text-sm text-slate-500 dark:text-slate-400">
-                  从一句话需求或已有材料开始，逐步确认需求、范围、方案、实现准备和验收口径，让团队更快进入可开工状态。
+                  从一句话需求或已有材料开始，先把产品理解对齐，再逐步完成方案设计、细节确认、开发方案和交付清单，让团队更快进入可开工状态。
                 </p>
               </div>
 

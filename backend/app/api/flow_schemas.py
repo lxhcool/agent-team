@@ -1,7 +1,7 @@
 """Shared request/response schemas for flow and workspace APIs."""
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -43,8 +43,21 @@ class StageFeedbackRequest(BaseModel):
     feedback: str = Field(..., min_length=1)
 
 
+class StageAssistantSettings(BaseModel):
+    model: Optional[str] = None
+    provider: Optional[str] = None
+    reasoning_effort: Optional[Literal["default", "low", "medium", "high"]] = None
+    enable_web_search: bool = False
+    enable_stage_skills: bool = True
+
+
 class GenerateStageRequest(BaseModel):
     instruction: Optional[str] = None
+    settings: Optional[StageAssistantSettings] = None
+
+
+class StageRunSettingsRequest(BaseModel):
+    settings: Optional[StageAssistantSettings] = None
 
 
 class WorkspaceArtifactResponse(BaseModel):
@@ -149,6 +162,7 @@ class WorkspaceStageMessageResponse(BaseModel):
 
 class SendWorkspaceStageMessageRequest(BaseModel):
     content: str = Field(..., min_length=1)
+    settings: Optional[StageAssistantSettings] = None
 
 
 class WorkspaceStageChatResponse(BaseModel):

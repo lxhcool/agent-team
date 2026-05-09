@@ -218,6 +218,9 @@ class Workspace(Base):
     stages: Mapped[List["WorkspaceStage"]] = relationship(
         back_populates="workspace", cascade="all, delete-orphan", order_by="WorkspaceStage.order"
     )
+    memories: Mapped[List["WorkspaceMemory"]] = relationship(
+        back_populates="workspace", cascade="all, delete-orphan", order_by="WorkspaceMemory.created_at"
+    )
     planning_sessions: Mapped[List["PlanningSession"]] = relationship(back_populates="workspace")
 
 
@@ -283,6 +286,30 @@ class WorkspaceStageMessage(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
     stage: Mapped["WorkspaceStage"] = relationship(back_populates="messages")
+
+
+class WorkspaceMemory(Base):
+    """Structured, source-backed product memory facts for staged flows."""
+    __tablename__ = "workspace_memories"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    workspace_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("workspaces.id"), nullable=False, index=True
+    )
+    stage_key: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    source_message_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    source_artifact_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    memory_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    topic: Mapped[str] = mapped_column(String(120), nullable=False, default="", index=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="confirmed", index=True)
+    scope: Mapped[str] = mapped_column(String(20), nullable=False, default="global", index=True)
+    supersedes_memory_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    tags_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+    workspace: Mapped["Workspace"] = relationship(back_populates="memories")
 
 
 class PlanningSession(Base):

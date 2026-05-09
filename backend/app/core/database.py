@@ -72,6 +72,43 @@ async def _migrate_schema():
                 logger.debug(f"Migration skipped ({table}.{column}): {e}")
                 await db.rollback()
 
+        try:
+            result = await db.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='workspace_memories'"))
+            exists = result.scalar_one_or_none()
+            if not exists:
+                await db.execute(text("""
+                    CREATE TABLE workspace_memories (
+                        id VARCHAR(36) PRIMARY KEY,
+                        workspace_id VARCHAR(36) NOT NULL,
+                        stage_key VARCHAR(50) NOT NULL,
+                        source_message_id VARCHAR(36),
+                        source_artifact_id VARCHAR(36),
+                        memory_type VARCHAR(50) NOT NULL,
+                        topic VARCHAR(120) NOT NULL DEFAULT '',
+                        content TEXT NOT NULL,
+                        status VARCHAR(20) NOT NULL DEFAULT 'confirmed',
+                        scope VARCHAR(20) NOT NULL DEFAULT 'global',
+                        supersedes_memory_id VARCHAR(36),
+                        tags_json TEXT,
+                        created_at DATETIME,
+                        updated_at DATETIME
+                    )
+                """))
+                await db.execute(text("CREATE INDEX ix_workspace_memories_workspace_id ON workspace_memories (workspace_id)"))
+                await db.execute(text("CREATE INDEX ix_workspace_memories_stage_key ON workspace_memories (stage_key)"))
+                await db.execute(text("CREATE INDEX ix_workspace_memories_memory_type ON workspace_memories (memory_type)"))
+                await db.execute(text("CREATE INDEX ix_workspace_memories_topic ON workspace_memories (topic)"))
+                await db.execute(text("CREATE INDEX ix_workspace_memories_status ON workspace_memories (status)"))
+                await db.execute(text("CREATE INDEX ix_workspace_memories_scope ON workspace_memories (scope)"))
+                await db.execute(text("CREATE INDEX ix_workspace_memories_source_message_id ON workspace_memories (source_message_id)"))
+                await db.execute(text("CREATE INDEX ix_workspace_memories_source_artifact_id ON workspace_memories (source_artifact_id)"))
+                await db.execute(text("CREATE INDEX ix_workspace_memories_supersedes_memory_id ON workspace_memories (supersedes_memory_id)"))
+                await db.commit()
+                logger.info("Migration applied: created workspace_memories table")
+        except Exception as e:
+            logger.debug(f"Migration skipped (workspace_memories): {e}")
+            await db.rollback()
+
 
 async def get_db() -> AsyncSession:
     """Dependency for getting async database sessions."""
