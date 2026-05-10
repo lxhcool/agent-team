@@ -2,7 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Clock3, Loader2, Sparkles, Trash2, ChevronRight } from "lucide-react";
+import {
+  Clock3, Loader2, Sparkles, Trash2, ChevronRight, X,
+} from "lucide-react";
 
 import { TopNav } from "../components/topnav";
 import { useConfirm } from "@/components/ui/confirm-dialog";
@@ -17,6 +19,21 @@ type FlowSummary = {
   stage_approved: number;
   created_at: string;
   updated_at: string;
+};
+
+const STATUS: Record<string, { label: string; color: string; bg: string; icon: React.ReactNode }> = {
+  created:       { label: "待处理", color: "var(--muted)", bg: "var(--accent-soft)", icon: <Clock3 size={9} /> },
+  planning:      { label: "规划中", color: "var(--accent)", bg: "var(--accent-soft)", icon: <Loader2 size={9} className="animate-spin" /> },
+  analyzing:     { label: "分析中", color: "var(--accent)", bg: "var(--accent-soft)", icon: <Loader2 size={9} className="animate-spin" /> },
+  researching:   { label: "调研中", color: "var(--accent)", bg: "var(--accent-soft)", icon: <Loader2 size={9} className="animate-spin" /> },
+  generating_proposal: { label: "生成方案", color: "var(--accent)", bg: "var(--accent-soft)", icon: <Sparkles size={9} /> },
+  reviewing:     { label: "审查中", color: "var(--accent)", bg: "var(--accent-soft)", icon: <Loader2 size={9} className="animate-spin" /> },
+  awaiting_approval: { label: "待审批", color: "var(--warning)", bg: "var(--warning-soft)", icon: <Sparkles size={9} /> },
+  generating_plan: { label: "生成计划", color: "var(--accent)", bg: "var(--accent-soft)", icon: <Sparkles size={9} /> },
+  ready_for_export:{ label: "可导出", color: "var(--success)", bg: "var(--success-soft)", icon: <Sparkles size={9} /> },
+  completed:     { label: "已完成", color: "var(--success)", bg: "var(--success-soft)", icon: <Sparkles size={9} /> },
+  cancelled:     { label: "已取消", color: "var(--muted)", bg: "var(--accent-soft)", icon: <X size={9} /> },
+  failed:        { label: "失败", color: "var(--danger)", bg: "var(--danger-soft)", icon: <X size={9} /> },
 };
 
 function formatRelative(value: string) {
@@ -69,107 +86,114 @@ export default function FlowsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(79,70,229,0.08),_transparent_30%),linear-gradient(180deg,_#f8fbff_0%,_#eef3f8_100%)] dark:bg-slate-950">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 dark:from-slate-950 dark:via-slate-950 dark:to-indigo-950/20">
       <TopNav />
-      <main className="mx-auto max-w-6xl px-6 pb-16 pt-24">
-        <section className="mb-6 rounded-[30px] border border-white/70 bg-white/92 p-6 shadow-[0_24px_80px_rgba(15,23,42,0.08)] backdrop-blur dark:border-slate-800 dark:bg-slate-900/92">
-          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-            <div>
-              <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-indigo-400">流程管理</div>
-              <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950 dark:text-slate-50">
-                所有项目流程
-              </h1>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500 dark:text-slate-400">
-                首页只展示最近几条，这里用来集中查看、继续进入和删除已有流程。
-              </p>
+      <main className="min-w-0 pt-14">
+        <div className="mx-auto max-w-5xl px-6 py-8">
+          {/* Header */}
+          <div className="mb-6 flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <Link
+                href="/"
+                className="flex size-8 items-center justify-center rounded-lg bg-white dark:bg-slate-800/50 text-slate-500 dark:text-slate-400 ring-1 ring-slate-200/60 dark:ring-slate-700/40 hover:ring-indigo-300 dark:hover:ring-indigo-500/40 hover:text-indigo-600 dark:hover:text-indigo-400 transition-all cursor-pointer"
+              >
+                <ChevronRight size={16} className="rotate-180" />
+              </Link>
+              <div>
+                <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
+                  <div className="flex size-8 items-center justify-center rounded-lg bg-indigo-100 dark:bg-indigo-500/15">
+                    <Sparkles size={16} className="text-indigo-600 dark:text-indigo-400" />
+                  </div>
+                  项目流程
+                </h1>
+              </div>
             </div>
-            <Link
-              href="/"
-              className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:border-indigo-200 hover:text-indigo-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
-            >
-              返回首页
-              <ChevronRight size={16} />
-            </Link>
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 dark:bg-indigo-500/10 px-3 py-1.5 text-xs font-semibold text-indigo-600 dark:text-indigo-400">
+              <Sparkles size={11} />
+              {flows.length} 个流程
+            </span>
           </div>
-        </section>
 
-        {loading ? (
-          <div className="flex items-center justify-center py-20 text-slate-400">
-            <Loader2 className="animate-spin" />
-          </div>
-        ) : sortedFlows.length === 0 ? (
-          <div className="rounded-[28px] border border-white/70 bg-white/92 px-6 py-10 text-sm text-slate-400 shadow-[0_24px_80px_rgba(15,23,42,0.08)] backdrop-blur dark:border-slate-800 dark:bg-slate-900/92 dark:text-slate-500">
-            还没有流程。去首页输入一句需求后，这里会出现可管理的列表。
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {sortedFlows.map((flow) => {
-              const progress = flow.stage_total
-                ? Math.round((flow.stage_approved / flow.stage_total) * 100)
-                : 0;
-              const isDeleting = deletingId === flow.id;
+          {loading ? (
+            <div className="flex items-center justify-center py-20">
+              <div className="flex gap-1.5"><span className="typing-dot" /><span className="typing-dot" /><span className="typing-dot" /></div>
+            </div>
+          ) : sortedFlows.length === 0 ? (
+            <div className="flex items-center gap-3 rounded-xl bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm ring-1 ring-slate-200/60 dark:ring-slate-700/40 px-4 py-3.5">
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-300 dark:text-slate-600">
+                <Sparkles size={15} strokeWidth={1.5} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-[13px] font-medium text-slate-400 dark:text-slate-500">还没有流程</div>
+                <div className="text-[11px] text-slate-300 dark:text-slate-600 mt-1">去首页输入需求后，这里会出现可管理的列表</div>
+              </div>
+            </div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {sortedFlows.map((flow) => {
+                const progress = flow.stage_total
+                  ? Math.round((flow.stage_approved / flow.stage_total) * 100)
+                  : 0;
+                const isDeleting = deletingId === flow.id;
+                const st = STATUS[flow.current_stage] || { label: flow.current_stage, color: "#64748b", bg: "rgba(100,116,139,0.06)" };
 
-              return (
-                <div
-                  key={flow.id}
-                  className="group rounded-[26px] border border-white/70 bg-white/92 px-5 py-5 shadow-[0_18px_60px_rgba(15,23,42,0.07)] backdrop-blur transition hover:shadow-[0_22px_70px_rgba(79,70,229,0.12)] dark:border-slate-800 dark:bg-slate-900/92"
-                >
-                  <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <div className="truncate text-lg font-semibold text-slate-900 dark:text-slate-100">
-                          {flow.name}
+                return (
+                  <div
+                    key={flow.id}
+                    className="group relative rounded-xl bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm ring-1 ring-slate-200/60 dark:ring-slate-700/40 transition-all duration-200 hover:ring-indigo-300/80 dark:hover:ring-indigo-500/30 hover:shadow-md hover:shadow-indigo-500/5 flex flex-col"
+                  >
+                    {/* Card body */}
+                    <Link href={`/flows/${flow.id}`} className="px-4 pt-3.5 pb-2">
+                      <div className="flex items-start gap-3">
+                        {/* Icon */}
+                        <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
+                          <Sparkles size={16} />
                         </div>
-                        <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-[11px] font-medium text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300">
-                          {flow.target_platform}
-                        </span>
-                        <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                          {flow.current_stage}
-                        </span>
+                        {/* Info */}
+                        <div className="min-w-0 flex-1 pr-5">
+                          {/* Line 1: Name */}
+                          <h3 className="text-[13px] font-semibold text-slate-800 dark:text-slate-100 truncate">{flow.name}</h3>
+                          {/* Line 2: Status · Platform · Time */}
+                          <div className="mt-1 flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                            <span className="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[9px] font-semibold" style={{ background: st.bg, color: st.color as string }}>{st.icon}{st.label}</span>
+                            <span className="text-slate-300 dark:text-slate-600">·</span>
+                            <span>{flow.target_platform}</span>
+                            <span className="text-slate-300 dark:text-slate-600">·</span>
+                            <span>{formatRelative(flow.updated_at)}</span>
+                          </div>
+                          {/* Line 3: Description */}
+                          <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500 truncate">{flow.description || "等待补充项目背景"}</p>
+                        </div>
                       </div>
+                    </Link>
 
-                      <div className="mt-2 line-clamp-2 text-sm leading-6 text-slate-500 dark:text-slate-400">
-                        {flow.description || "等待补充项目背景"}
+                    {/* Card bottom: progress + actions */}
+                    <div className="mt-auto px-4 py-2 border-t border-slate-100 dark:border-slate-800/60 flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <div className="flex-1 h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                          <div className="h-full rounded-full bg-indigo-500 transition-all" style={{ width: `${progress}%` }} />
+                        </div>
+                        <span className="text-[10px] font-medium text-indigo-600 dark:text-indigo-400 shrink-0">{progress}%</span>
                       </div>
-
-                      <div className="mt-4 flex flex-wrap items-center gap-4 text-xs text-slate-400 dark:text-slate-500">
-                        <span className="inline-flex items-center gap-1.5">
-                          <Clock3 size={13} />
-                          最近更新 {formatRelative(flow.updated_at)}
-                        </span>
-                        <span>{progress}% 已确认</span>
-                        <span>{flow.stage_approved}/{flow.stage_total} 阶段完成</span>
-                      </div>
-
-                      <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-                        <div className="h-full rounded-full bg-indigo-500 transition-all" style={{ width: `${progress}%` }} />
-                      </div>
-                    </div>
-
-                    <div className="flex shrink-0 flex-wrap gap-2">
-                      <Link
-                        href={`/flows/${flow.id}`}
-                        className="inline-flex items-center gap-2 rounded-full bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-indigo-500"
-                      >
-                        <Sparkles size={15} />
-                        继续查看
-                      </Link>
                       <button
                         type="button"
-                        onClick={() => handleDelete(flow)}
+                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDelete(flow); }}
                         disabled={isDeleting}
-                        className="inline-flex items-center gap-2 rounded-full border border-red-200 bg-white px-4 py-2.5 text-sm font-medium text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-500/20 dark:bg-slate-900 dark:text-red-300 dark:hover:bg-red-500/10"
+                        className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium transition-colors duration-200 cursor-pointer shrink-0 ${
+                          isDeleting
+                            ? "bg-slate-50 dark:bg-slate-800 text-slate-300 dark:text-slate-600 cursor-not-allowed"
+                            : "bg-red-50 dark:bg-red-500/10 hover:bg-red-100 dark:hover:bg-red-500/20 text-red-600 dark:text-red-400"
+                        }`}
                       >
-                        {isDeleting ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
-                        删除
+                        {isDeleting ? <Loader2 size={10} className="animate-spin" /> : <Trash2 size={10} />}删除
                       </button>
                     </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
+                );
+              })}
+            </div>
+          )}
+        </div>
       </main>
       {ConfirmDialog}
     </div>

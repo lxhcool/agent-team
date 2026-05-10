@@ -308,31 +308,55 @@ export default function HomePage() {
                   </Link>
                 </div>
                 {flows.length === 0 ? (
-                  <div className="rounded-xl bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm ring-1 ring-slate-200/60 dark:ring-slate-700/40 px-4 py-4 text-sm text-slate-400 dark:text-slate-500">
-                    在上方输入一句话后，会自动创建第一条流程。
+                  <div className="flex items-center gap-3 rounded-xl bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm ring-1 ring-slate-200/60 dark:ring-slate-700/40 px-4 py-3.5">
+                    <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-300 dark:text-slate-600">
+                      <Sparkles size={15} strokeWidth={1.5} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[13px] font-medium text-slate-400 dark:text-slate-500">还没有流程</div>
+                      <div className="text-[11px] text-slate-300 dark:text-slate-600 mt-1">在上方输入需求后，会自动创建第一条流程</div>
+                    </div>
                   </div>
                 ) : (
-                  <div className="grid gap-3 md:grid-cols-3">
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                     {flows.slice(0, 3).map((flow) => {
                       const progress = flow.stage_total
                         ? Math.round((flow.stage_approved / flow.stage_total) * 100)
                         : 0;
+                      const st = STATUS[flow.current_stage] || STATUS.created;
                       return (
                         <Link
                           key={flow.id}
                           href={`/flows/${flow.id}`}
-                          className="rounded-xl bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm ring-1 ring-slate-200/60 dark:ring-slate-700/40 px-4 py-4 transition-all hover:ring-violet-300 dark:hover:ring-violet-500/40"
+                          className="group relative rounded-xl bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm ring-1 ring-slate-200/60 dark:ring-slate-700/40 transition-all duration-200 hover:ring-violet-300/80 dark:hover:ring-violet-500/30 hover:shadow-md hover:shadow-violet-500/5 flex flex-col"
                         >
-                          <div className="mb-1 truncate text-sm font-semibold text-slate-800 dark:text-slate-100">{flow.name}</div>
-                          <div className="line-clamp-2 min-h-[34px] text-xs leading-5 text-slate-500 dark:text-slate-400">
-                            {flow.description || "等待补充项目目标"}
+                          {/* Card body */}
+                          <div className="px-4 pt-3.5 pb-2">
+                            <div className="flex items-start gap-3">
+                              {/* Icon */}
+                              <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-violet-50 dark:bg-violet-500/10 text-violet-600 dark:text-violet-400">
+                                <Sparkles size={16} />
+                              </div>
+                              {/* Info */}
+                              <div className="min-w-0 flex-1 pr-5">
+                                <h3 className="text-[13px] font-semibold text-slate-800 dark:text-slate-100 truncate">{flow.name}</h3>
+                                <div className="mt-1 flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                                  <span className="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[9px] font-semibold" style={{ background: st.bg, color: st.color as string }}>{st.icon}{st.label}</span>
+                                  <span className="text-slate-300 dark:text-slate-600">·</span>
+                                  <span>{flow.target_platform}</span>
+                                </div>
+                                <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500 truncate">{flow.description || "等待补充项目目标"}</p>
+                              </div>
+                            </div>
                           </div>
-                          <div className="mt-3 flex items-center justify-between text-[11px] text-slate-400 dark:text-slate-500">
-                            <span>{flow.target_platform}</span>
-                            <span>{progress}% 已确认</span>
-                          </div>
-                          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-                            <div className="h-full rounded-full bg-violet-500" style={{ width: `${progress}%` }} />
+                          {/* Card bottom: progress bar */}
+                          <div className="mt-auto px-4 py-2 border-t border-slate-100 dark:border-slate-800/60">
+                            <div className="flex items-center gap-2">
+                              <div className="flex-1 h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                                <div className="h-full rounded-full bg-violet-500 transition-all" style={{ width: `${progress}%` }} />
+                              </div>
+                              <span className="text-[10px] font-medium text-violet-600 dark:text-violet-400">{progress}%</span>
+                            </div>
                           </div>
                         </Link>
                       );

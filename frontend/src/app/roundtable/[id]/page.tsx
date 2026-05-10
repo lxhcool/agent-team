@@ -9,10 +9,11 @@ import rehypeHighlight from "rehype-highlight";
 import {
   ArrowLeft, Sun, Moon, CheckCircle, AlertTriangle,
   Loader2, Download, Globe, Star, Sparkles, Zap, MessageCircle,
-  ChevronRight, Users, Play, StopCircle,
+  ChevronRight, Users, Play, StopCircle, Copy, Check, FileDown, User,
 } from "lucide-react";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { ChatInputBar } from "@/components/chat-input-bar";
+import Image from "next/image";
 
 // ===== Types =====
 type RoundtableSession = {
@@ -479,23 +480,34 @@ export default function RoundtablePage() {
     }
 
     messageElements.push(
-      <div key={msg.id} className={`flex gap-3 items-start msg-appear ${isUser ? "flex-row-reverse" : ""}`}>
-        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg overflow-hidden">
-          <img src={avatarUrl(msg.sender)} alt={msg.sender_display || msg.sender} className="size-9 rounded-lg" />
-        </span>
-        <div className={isUser ? "text-right" : ""}>
-          <div className={`mb-1.5 ${isUser ? "text-right" : ""}`}>
-            <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg ${ac.name}`} style={{ background: "var(--accent-soft)" }}>
-              {msg.sender_display || msg.sender}
-            </span>
+      <div key={msg.id} className={`flex gap-2.5 items-start msg-appear ${isUser ? "justify-end" : "justify-start"}`}>
+        {!isUser && (
+          <div className="flex size-7 shrink-0 items-center justify-center rounded-full overflow-hidden mt-0.5">
+            <Image src="/logo.png" alt="Logo" width={28} height={28} />
+          </div>
+        )}
+        <article className={`max-w-[80%] min-w-0 group ${isUser ? "" : ""}`}>
+          <div className={`mb-1 flex items-center gap-2 text-[11px] text-slate-400 ${isUser ? "justify-end" : ""}`}>
+            <span className={`font-medium ${ac.name}`}>{msg.sender_display || msg.sender}</span>
             {msg.category && (
-              <span className="ml-1.5 text-[10px] text-[var(--muted)]">#{msg.category}</span>
+              <span className="text-[10px] text-slate-400">#{msg.category}</span>
             )}
           </div>
-          <div className={`chat-bubble ${ac.bubble} text-sm leading-relaxed`}>
-            <CollapsibleContent content={msg.content} />
+          <div className={`rounded-lg px-3.5 py-2.5 text-[13px] leading-6 ${
+            isUser
+              ? "bg-blue-600 text-white"
+              : "border border-gray-200 dark:border-white/10 bg-white dark:bg-[#161b22] text-slate-900 dark:text-slate-100"
+          }`}>
+            <div className="chat-md overflow-x-auto">
+              <CollapsibleContent content={msg.content} />
+            </div>
           </div>
-        </div>
+        </article>
+        {isUser && (
+          <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white mt-0.5">
+            <User size={13} />
+          </div>
+        )}
       </div>
     );
   });
@@ -581,22 +593,21 @@ export default function RoundtablePage() {
 
           {/* Streaming content */}
           {streamingContent && streamingAgent && (
-            <div className="flex gap-3 items-start msg-appear">
-              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg overflow-hidden">
-                <img src={avatarUrl(streamingAgent.toLowerCase())} alt={streamingAgent} className="size-9 rounded-lg" />
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="mb-1.5">
-                  <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-lg pname-0" style={{ background: "var(--accent-soft)" }}>
-                    {streamingAgent}
-                  </span>
+            <div className="flex gap-2.5 items-start msg-appear justify-start">
+              <div className="flex size-7 shrink-0 items-center justify-center rounded-full overflow-hidden mt-0.5">
+                <Image src="/logo.png" alt="Logo" width={28} height={28} />
+              </div>
+              <article className="max-w-[80%] min-w-0">
+                <div className="mb-1 flex items-center gap-2 text-[11px] text-slate-400">
+                  <span className="font-medium pname-0">{streamingAgent}</span>
                 </div>
-                <div className="chat-bubble bubble-p0 text-sm leading-relaxed streaming-cursor">
-                  <div className="chat-md">
+                <div className="rounded-lg px-3.5 py-2.5 text-[13px] leading-6 border border-gray-200 dark:border-white/10 bg-white dark:bg-[#161b22] text-slate-900 dark:text-slate-100 streaming-cursor">
+                  <div className="chat-md overflow-x-auto">
                     <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{streamingContent}</ReactMarkdown>
                   </div>
                 </div>
-              </div>
+              </article>
+            </div>
             </div>
           )}
 
