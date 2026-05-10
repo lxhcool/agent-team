@@ -12,14 +12,19 @@ import {
   Brain,
   Check,
   CheckCircle2,
+  ClipboardList,
   Copy,
+  Eclipse,
   FileDown,
   FileText,
+  FolderCode,
   FolderKanban,
   GitBranch,
   Layers3,
   Loader2,
+  PackageCheck,
   Paperclip,
+  ReceiptText,
   Send,
   Sparkles,
   User,
@@ -171,21 +176,21 @@ const STAGE_META: Record<
     short: "01",
     description: "先对齐这到底是个什么产品，再确认主要用户、核心用途和边界。",
     deliverable: "需求确认文档",
-    icon: Sparkles,
+    icon: PackageCheck,
   },
   product: {
     label: "方案设计",
     short: "02",
     description: "先整理功能模块和模块关系，再落到页面结构和主要流程。",
     deliverable: "方案设计文档",
-    icon: Layers3,
+    icon: Eclipse,
   },
   ui_direction: {
     label: "细节确认",
     short: "03",
     description: "锁定角色权限、状态流转、异常处理、数据口径和关键边界。",
     deliverable: "细节确认文档",
-    icon: GitBranch,
+    icon: ReceiptText,
   },
   prototype: {
     label: "补充材料",
@@ -199,7 +204,7 @@ const STAGE_META: Record<
     short: "04",
     description: "整理开发可接手的实现方案，包括模块拆分、接口数据和依赖风险。",
     deliverable: "开发方案文档",
-    icon: GitBranch,
+    icon: FolderCode,
   },
   development: {
     label: "实现准备",
@@ -220,7 +225,7 @@ const STAGE_META: Record<
     short: "05",
     description: "整理全部已确认文档，支持单独下载和整体打包下载。",
     deliverable: "交付清单",
-    icon: FolderKanban,
+    icon: ClipboardList,
   },
 };
 
@@ -232,12 +237,12 @@ const STATUS_LABEL: Record<StageStatus, string> = {
   skipped: "已跳过",
 };
 
-const STATUS_BADGE_VARIANT: Record<StageStatus, "outline" | "info" | "success" | "warning"> = {
-  draft: "outline",
+const STATUS_BADGE_VARIANT: Record<StageStatus, "secondary" | "info" | "success" | "warning"> = {
+  draft: "secondary",
   awaiting_confirmation: "info",
   approved: "success",
   revision_requested: "warning",
-  skipped: "outline",
+  skipped: "secondary",
 };
 
 function formatDate(value: string | null) {
@@ -973,7 +978,7 @@ export default function FlowDetailPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 dark:from-slate-950 dark:via-slate-950 dark:to-indigo-950/20">
+      <div className="min-h-screen dark:from-slate-950 dark:via-slate-950 dark:to-indigo-950/20" style={{ backgroundColor: '#f9f9ff' }}>
         <TopNav />
         <main className="flex h-screen items-center justify-center pt-14 text-slate-400">
           <Loader2 className="animate-spin" />
@@ -984,7 +989,7 @@ export default function FlowDetailPage() {
 
   if (!flow || !selectedStage || !currentMeta) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 dark:from-slate-950 dark:via-slate-950 dark:to-indigo-950/20">
+      <div className="min-h-screen dark:from-slate-950 dark:via-slate-950 dark:to-indigo-950/20" style={{ backgroundColor: '#f9f9ff' }}>
         <TopNav />
         <main className="mx-auto max-w-[1600px] px-6 pt-28">
           <Link href="/" className="inline-flex items-center gap-2 text-sm text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400">
@@ -1044,33 +1049,37 @@ export default function FlowDetailPage() {
     .at(-1);
 
   return (
-    <div className="flex h-screen flex-col bg-gradient-to-br from-slate-50 via-white to-indigo-50/30 text-slate-950 dark:from-slate-950 dark:via-slate-950 dark:to-indigo-950/20 dark:text-slate-50">
+    <div className="flex h-screen flex-col text-slate-950 dark:text-slate-50" style={{ backgroundColor: '#f9f9ff' }}>
       <TopNav />
       <main className="flex min-h-0 flex-1 flex-col pt-14">
-        {/* Top bar — Glassmorphism breadcrumb */}
-        <div className="mx-auto w-full max-w-[1600px] border-b border-slate-200/60 dark:border-slate-700/40 bg-white/70 dark:bg-slate-900/70 backdrop-blur-xl">
-          <div className="flex items-center gap-2 px-4 py-2">
-            <Link
-              href="/flows"
-              className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-400 transition-colors"
-            >
-              <ArrowLeft size={14} />
-              流程
-            </Link>
-            <span className="text-slate-300 dark:text-slate-600">/</span>
-            <span className="truncate text-sm font-semibold text-slate-800 dark:text-slate-200">{flow.name}</span>
-            <span className="text-slate-300 dark:text-slate-600">/</span>
-            <span className="text-xs text-slate-500 dark:text-slate-400">{currentMeta?.label}</span>
-
-            <div className="ml-auto flex items-center gap-4 text-xs text-slate-500 dark:text-slate-400">
-              <div className="flex items-center gap-2">
-                <div className="h-1.5 w-24 overflow-hidden rounded-full bg-slate-200/80 dark:bg-slate-700/60">
+        {/* Page header — floating, not a rigid bar */}
+        <div className="mx-auto w-full max-w-[1600px] px-3 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Link
+                href="/flows"
+                className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-white/70 dark:bg-slate-800/50 text-slate-500 dark:text-slate-400 ring-1 ring-slate-200/60 dark:ring-slate-700/40 backdrop-blur-sm hover:ring-indigo-300 dark:hover:ring-indigo-500/40 hover:text-indigo-600 dark:hover:text-indigo-400 transition-all"
+              >
+                <ArrowLeft size={16} />
+              </Link>
+              <div>
+                <h1 className="flex items-center gap-2 text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-100">
+                  {flow.name}
+                  <span className="inline-flex items-center rounded-full bg-indigo-50 dark:bg-indigo-500/10 px-2 py-0.5 text-[11px] font-medium text-indigo-600 dark:text-indigo-400">
+                    {currentMeta?.label}
+                  </span>
+                </h1>
+                <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">{flow.target_platform} · {visibleStages.length} 个阶段</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2.5">
+              {/* Progress */}
+              <div className="hidden sm:flex items-center gap-2 rounded-full bg-white/60 dark:bg-slate-800/60 backdrop-blur-sm px-3 py-1.5 ring-1 ring-slate-200/60 dark:ring-slate-700/40">
+                <div className="h-1.5 w-20 overflow-hidden rounded-full bg-slate-200/80 dark:bg-slate-700/60">
                   <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 transition-all" style={{ width: `${stageProgress}%` }} />
                 </div>
-                <span className="font-medium text-indigo-600 dark:text-indigo-400">{stageProgress}%</span>
+                <span className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400">{stageProgress}%</span>
               </div>
-              <span>{flow.stage_approved}/{visibleStages.length} 阶段</span>
-              <span>{totalArtifacts} 产物</span>
             </div>
           </div>
         </div>
@@ -1081,14 +1090,17 @@ export default function FlowDetailPage() {
           </div>
         )}
 
-        {/* Three-column workspace — Glassmorphism */}
-        <div className="mx-auto w-full max-w-[1600px] flex min-h-0 flex-1 overflow-hidden rounded-b-2xl ring-1 ring-slate-200/80 dark:ring-slate-700/50 bg-white/70 dark:bg-slate-900/70 backdrop-blur-xl shadow-lg shadow-indigo-500/5 dark:shadow-none">
-          {/* Left column — Glassmorphism sidebar */}
-          <aside className="w-[240px] shrink-0 border-r border-slate-200/60 dark:border-slate-700/40 flex flex-col bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm">
-            <div className="px-3 pt-3 pb-1">
-              <h2 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">流程阶段</h2>
-            </div>
-            <div className="flex-1 overflow-y-auto">
+        {/* Three-column workspace — Floating panels */}
+        <div className="mx-auto w-full max-w-[1600px] flex min-h-0 flex-1 gap-4 px-4 pb-4">
+          {/* Left column — stage list */}
+          <aside className="w-[240px] shrink-0 flex flex-col items-center">
+            {/* Header + Stage list */}
+            <div className="w-[240px] rounded-lg bg-white dark:bg-slate-900 shadow-[0_1px_3px_rgba(0,0,0,0.06),0_1px_2px_rgba(0,0,0,0.04)]">
+              <div className="px-4 pt-5 pb-4 text-base font-semibold leading-none">
+                <h2 className="text-[#333] dark:text-slate-200">流程阶段</h2>
+              </div>
+              {/* Stage list */}
+              <div className="overflow-y-auto px-2 pb-2">
               {visibleStages.map((stage, index) => {
                 const meta = STAGE_META[stage.stage_key];
                 const active = stage.stage_key === selectedStage.stage_key;
@@ -1099,54 +1111,57 @@ export default function FlowDetailPage() {
                     key={stage.id}
                     onClick={() => setSelectedKey(stage.stage_key)}
                     className={cn(
-                      "relative flex w-full items-center gap-2.5 px-4 py-2 text-left text-sm transition-all",
+                      "relative flex w-full items-center gap-2.5 px-2.5 py-2 rounded-lg text-left text-sm transition-all",
                       active
-                        ? "font-medium text-indigo-600 dark:text-indigo-400 bg-white/80 dark:bg-slate-800/80 before:absolute before:left-0 before:top-1 before:bottom-1 before:w-0.5 before:rounded-r before:bg-gradient-to-b before:from-indigo-500 before:to-violet-500"
-                        : "text-slate-600 dark:text-slate-400 hover:bg-white/50 dark:hover:bg-white/5",
+                        ? "font-medium text-indigo-600 dark:text-indigo-400 bg-indigo-50/90 dark:bg-indigo-500/10"
+                        : "text-slate-600 dark:text-slate-400 hover:bg-slate-100/60 dark:hover:bg-slate-800/40",
                     )}
                   >
                     <div
                       className={cn(
-                        "flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold ring-1",
+                        "flex size-7 shrink-0 items-center justify-center rounded-lg",
                         approved
-                          ? "ring-emerald-400/50 bg-emerald-50 text-emerald-600 dark:ring-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-400"
+                          ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400"
                           : active
-                            ? "ring-indigo-400/50 bg-indigo-50 text-indigo-600 dark:ring-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-400"
-                            : "ring-slate-300/60 bg-white/80 text-slate-400 dark:ring-slate-600 dark:bg-slate-800 dark:text-slate-500",
+                            ? "bg-white text-indigo-600 shadow-[0_1px_2px_rgba(0,0,0,0.04)] dark:bg-slate-800 dark:text-indigo-400"
+                            : "bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500",
                       )}
                     >
-                      {approved ? <Check size={10} /> : index + 1}
+                      {approved ? <Check size={14} /> : <meta.icon size={14} />}
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5">
-                        <span className="truncate">{meta.label}</span>
+                        <span className={cn("truncate text-[13px]", active && "font-semibold")}>{meta.label}</span>
                       </div>
-                      <div className="mt-0.5 flex items-center gap-1.5">
-                        <span className="truncate text-xs text-slate-400 dark:text-slate-500">{meta.deliverable}</span>
-                        <Badge
-                          variant={STATUS_BADGE_VARIANT[stage.status]}
-                          className="px-1.5 py-px text-[10px] leading-4 shrink-0"
-                        >
-                          {STATUS_LABEL[stage.status]}
-                        </Badge>
+                      <div className="mt-0.5">
+                        <span className="truncate text-[12px] text-slate-400 dark:text-slate-500">{meta.deliverable}</span>
                       </div>
                     </div>
+                    <Badge
+                      variant={active ? "secondary" : STATUS_BADGE_VARIANT[stage.status]}
+                      className={cn(
+                        "px-1.5 py-px text-[10px] leading-4 shrink-0",
+                        active && "bg-white dark:bg-slate-800",
+                      )}
+                    >
+                      {STATUS_LABEL[stage.status]}
+                    </Badge>
                   </button>
                 );
               })}
             </div>
+            </div>
 
             {/* Current stage info */}
-            <div className="border-t border-slate-200/60 dark:border-slate-700/40 p-3">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs font-medium text-slate-500 dark:text-slate-400">当前阶段</span>
-                <Badge variant={STATUS_BADGE_VARIANT[selectedStage.status]} className="px-1.5 py-px text-[10px] leading-4">
-                  {STATUS_LABEL[selectedStage.status]}
+            <div className="current-stage-card w-[240px] mt-4 rounded-lg shadow-[0_1px_3px_rgba(0,0,0,0.06),0_1px_2px_rgba(0,0,0,0.04)] px-4 pt-5 pb-4" style={{ background: 'linear-gradient(90deg, #fff2ec 0, #f0f1f6 42%, #eef2ff 100%)' }}>
+              <div className="flex items-center justify-between mb-2.5">
+                <span className="text-base font-semibold leading-none text-[#333] dark:text-slate-200">当前阶段</span>
+                <Badge variant="secondary" className="px-1.5 py-px text-[10px] leading-4 bg-white dark:bg-slate-800 shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+                  {currentMeta.label}
                 </Badge>
               </div>
-              <div className="text-sm font-medium text-slate-800 dark:text-slate-200">{currentMeta.label}</div>
-              <div className="mt-0.5 text-xs leading-4 text-slate-400 dark:text-slate-500">{currentMeta.description}</div>
-              <div className="mt-2 rounded-xl bg-slate-100/80 dark:bg-slate-800/60 backdrop-blur-sm px-2.5 py-1.5 text-xs leading-4 text-slate-500 dark:text-slate-400">
+              <div className="mt-3 text-xs leading-4 text-slate-400 dark:text-slate-500">{currentMeta.description}</div>
+              <div className="mt-4 rounded bg-slate-100 dark:bg-slate-800 px-2.5 py-1.5 text-[11px] leading-4 text-slate-500 dark:text-slate-400">
                 {isBlockedByUpstream
                   ? "当前阶段被前置阶段卡住，先完成上游调整。"
                   : stageReadyToFinalize
@@ -1158,7 +1173,7 @@ export default function FlowDetailPage() {
                   {stageReadinessBlockers.slice(0, 2).map((blocker, index) => (
                     <div
                       key={`${selectedStage.id}-blocker-${index}`}
-                      className="rounded-xl bg-amber-50/80 dark:bg-amber-500/10 backdrop-blur-sm px-2.5 py-1 text-xs leading-4 text-amber-700 dark:text-amber-200"
+                      className="rounded-lg bg-amber-50/80 dark:bg-amber-500/10 px-2.5 py-1 text-[11px] leading-4 text-amber-600 dark:text-amber-200"
                     >
                       {blocker}
                     </div>
@@ -1169,9 +1184,9 @@ export default function FlowDetailPage() {
           </aside>
 
           {/* Center column — chat */}
-          <section className="flex min-w-0 flex-1 flex-col bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm">
+          <section className="flex min-w-0 flex-1 flex-col rounded-lg bg-white dark:bg-slate-900 shadow-[0_1px_3px_rgba(0,0,0,0.06),0_1px_2px_rgba(0,0,0,0.04)] overflow-hidden">
             {/* Chat header */}
-            <div className="border-b border-slate-200/60 dark:border-slate-700/40 px-4 py-2.5">
+            <div className="px-4 py-3 border-b border-slate-200/50 dark:border-slate-700/30 bg-white/40 dark:bg-slate-800/30">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <span className="flex size-6 items-center justify-center rounded-lg bg-indigo-50 dark:bg-indigo-500/10 text-xs font-bold text-indigo-600 dark:text-indigo-400">
@@ -1312,18 +1327,18 @@ export default function FlowDetailPage() {
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Input area — Glassmorphism card */}
-            <div className="px-3 pb-3 pt-2">
-              <form onSubmit={submitMessage} className="group relative rounded-2xl bg-white/70 dark:bg-slate-900/70 backdrop-blur-xl shadow-lg shadow-indigo-500/5 dark:shadow-none ring-1 ring-slate-200/80 dark:ring-slate-700/50 focus-within:ring-indigo-300 dark:focus-within:ring-indigo-500/30 transition-all duration-300 focus-within:shadow-xl focus-within:shadow-indigo-500/8">
+            {/* Input area — Unified card */}
+            <form onSubmit={submitMessage}>
+              <div className="m-4 rounded-xl bg-white/70 dark:bg-slate-900/70 backdrop-blur-md shadow-[0_1px_4px_rgba(0,0,0,0.06)] ring-1 ring-slate-200/70 dark:ring-slate-700/30 p-4">
                 {/* Settings row */}
-                <div className="flex flex-wrap items-center gap-1.5 px-3.5 pt-3 pb-1.5">
+                <div className="mb-2 flex flex-wrap items-center gap-2">
                   <Select
                     value={assistantSettings.model}
                     onValueChange={(value) =>
                       setAssistantSettings((current) => ({ ...current, model: value || "" }))
                     }
                   >
-                                        <SelectTrigger size="sm" className="h-7 text-xs border-transparent bg-slate-100/60 dark:bg-slate-800/60 backdrop-blur-sm ring-1 ring-slate-200/60 dark:ring-slate-700/40 hover:ring-slate-300 dark:hover:ring-slate-600/60 text-slate-600 dark:text-slate-300" style={{ width: 140, maxWidth: 140 }}>
+                    <SelectTrigger size="sm" className="h-7 w-[130px] text-xs border-slate-200/60 bg-white/80 dark:bg-slate-800/80 ring-1 ring-slate-200/60 dark:ring-slate-700/40 text-slate-600 dark:text-slate-300 focus-visible:ring-indigo-300">
                       <SelectValue placeholder={modelsLoading ? "加载中..." : "选择模型"} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} />
                     </SelectTrigger>
                     <SelectContent className="min-w-[220px]">
@@ -1335,136 +1350,118 @@ export default function FlowDetailPage() {
                     </SelectContent>
                   </Select>
 
-                  <Select
-                    value={assistantSettings.reasoning_effort}
-                    onValueChange={(value) =>
+                  <button
+                    type="button"
+                    onClick={() =>
                       setAssistantSettings((current) => ({
                         ...current,
-                        reasoning_effort: value as AssistantRuntimeSettings["reasoning_effort"],
+                        enable_web_search: !current.enable_web_search,
                       }))
                     }
-                  >
-                    <SelectTrigger size="sm" className="min-w-[100px] h-7 text-xs border-transparent bg-slate-100/60 dark:bg-slate-800/60 backdrop-blur-sm ring-1 ring-slate-200/60 dark:ring-slate-700/40 hover:ring-slate-300 dark:hover:ring-slate-600/60 text-slate-600 dark:text-slate-300">
-                      <SelectValue placeholder="思考强度" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {REASONING_OPTIONS.map((item) => (
-                        <SelectItem key={item.value} value={item.value}>
-                          思考 / {item.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-
-                <button
-                  type="button"
-                  onClick={() =>
-                    setAssistantSettings((current) => ({
-                      ...current,
-                      enable_web_search: !current.enable_web_search,
-                    }))
-                  }
-                  className={cn(
-                    "flex items-center gap-1.5 h-7 rounded-lg px-2.5 text-xs font-medium transition-all",
-                    assistantSettings.enable_web_search
-                      ? "bg-gradient-to-r from-indigo-600 to-violet-600 text-white hover:from-indigo-700 hover:to-violet-700 shadow-sm shadow-indigo-500/25"
-                      : "bg-slate-100/60 dark:bg-slate-800/60 backdrop-blur-sm ring-1 ring-slate-200/60 dark:ring-slate-700/40 hover:ring-indigo-300 dark:hover:ring-indigo-500/40 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400",
-                  )}
-                >
-                  <Wifi size={12} />
-                  联网
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() =>
-                    setAssistantSettings((current) => ({
-                      ...current,
-                      enable_stage_skills: !current.enable_stage_skills,
-                    }))
-                  }
-                  className={cn(
-                    "flex items-center gap-1.5 h-7 rounded-lg px-2.5 text-xs font-medium transition-all",
-                    assistantSettings.enable_stage_skills
-                      ? "bg-slate-800 text-white hover:bg-slate-700 dark:bg-slate-200 dark:text-slate-900"
-                      : "bg-slate-100/60 dark:bg-slate-800/60 backdrop-blur-sm ring-1 ring-slate-200/60 dark:ring-slate-700/40 hover:ring-indigo-300 dark:hover:ring-indigo-500/40 text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400",
-                  )}
-                >
-                  <Wrench size={12} />
-                  阶段增强
-                </button>
-                </div>
-
-                {/* Textarea — transparent, embedded in card */}
-                <div className="px-3.5 pb-2">
-                  <textarea
-                    value={draft}
-                    onChange={(event) =>
-                      setDraftByStage((current) => ({
-                        ...current,
-                        [selectedStage.stage_key]: event.target.value,
-                      }))
-                    }
-                    rows={3}
-                    placeholder="继续补充、纠偏，或者直接告诉系统这一阶段已经可以收住。"
-                    className="w-full resize-none bg-transparent text-sm text-slate-700 dark:text-slate-200 placeholder:text-slate-400/70 dark:placeholder:text-slate-500/70 outline-none leading-relaxed"
-                  />
-                </div>
-
-                {/* Bottom bar */}
-                <div className="flex items-center justify-between px-3.5 pb-3">
-                  <span className="text-[11px] text-slate-400 dark:text-slate-500 truncate mr-4">
-                    {isBlockedByUpstream
-                      ? "当前阶段已被上游调整影响，需先回到前置阶段重新确认，之后再处理这里。"
-                      : selectedStage.status === "approved"
-                      ? "当前阶段已确认；如果发现还有遗漏，请先发起调整，系统会把当前阶段和后续阶段标成需重审。"
-                      : stageReadyToFinalize
-                      ? "这一阶段已经可以收口了；如果没有新的补充，可以直接生成阶段结论。"
-                      : "当前阶段会持续对话；只有确认后才进入下一阶段。"}
-                  </span>
-                  <div className="flex gap-2 shrink-0">
-                    <button
-                      type="submit"
-                      disabled={sending || approving || revising || isBlockedByUpstream || selectedStage.status === "approved" || !draft.trim()}
-                      className="flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-medium text-white bg-gradient-to-r from-indigo-600 to-violet-600 shadow-md shadow-indigo-500/25 hover:from-indigo-700 hover:to-violet-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed active:scale-[0.97]"
-                    >
-                      {sending ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
-                      发送
-                    </button>
-                    {selectedStage.status === "approved" && (
-                      <button
-                        type="button"
-                        onClick={requestRevision}
-                        disabled={revising || sending || approving || isBlockedByUpstream || !draft.trim()}
-                        className="flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-medium text-white bg-amber-600 hover:bg-amber-500 shadow-md shadow-amber-500/15 transition-all disabled:opacity-40 disabled:cursor-not-allowed active:scale-[0.97]"
-                      >
-                        {revising ? <Loader2 size={13} className="animate-spin" /> : <GitBranch size={13} />}
-                        发起调整
-                      </button>
+                    className={cn(
+                      "inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs transition-all",
+                      assistantSettings.enable_web_search
+                        ? "bg-indigo-50 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-400"
+                        : "text-slate-500 hover:bg-slate-100/80 dark:hover:bg-slate-800/60 dark:text-slate-400",
                     )}
-                    <button
-                      type="button"
-                      onClick={approveStage}
-                      disabled={approving || sending || revising || isBlockedByUpstream || selectedStage.status === "approved"}
-                      className="flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm ring-1 ring-slate-200/80 dark:ring-slate-700/60 hover:ring-indigo-300 dark:hover:ring-indigo-500/40 hover:text-indigo-600 dark:hover:text-indigo-400 transition-all disabled:opacity-40 disabled:cursor-not-allowed active:scale-[0.97]"
-                    >
-                      {approving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
-                      {hasStageConclusion ? "确认进入下一阶段" : stageReadyToFinalize ? "生成阶段结论" : "继续确认"}
-                    </button>
-                  </div>
+                  >
+                    <Wifi size={12} />
+                    联网搜索
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setAssistantSettings((current) => ({
+                        ...current,
+                        enable_stage_skills: !current.enable_stage_skills,
+                      }))
+                    }
+                    className={cn(
+                      "inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs transition-all",
+                      assistantSettings.enable_stage_skills
+                        ? "bg-violet-50 text-violet-600 dark:bg-violet-500/10 dark:text-violet-400"
+                        : "text-slate-500 hover:bg-slate-100/80 dark:hover:bg-slate-800/60 dark:text-slate-400",
+                    )}
+                  >
+                    <Wrench size={12} />
+                    阶段增强
+                  </button>
+
+                  <span className="ml-auto text-xs text-slate-400 dark:text-slate-500">
+                    {isBlockedByUpstream
+                      ? "当前阶段被前置阶段锁定"
+                      : selectedStage.status === "approved"
+                      ? "当前阶段已确认"
+                      : stageReadyToFinalize
+                      ? "这一阶段已经具备收口条件"
+                      : "当前还在对话推进中"}
+                  </span>
                 </div>
+
+                {/* Textarea */}
+                <textarea
+                  value={draft}
+                  onChange={(event) =>
+                    setDraftByStage((current) => ({
+                      ...current,
+                      [selectedStage.stage_key]: event.target.value,
+                    }))
+                  }
+                  rows={3}
+                  placeholder="继续补充、纠偏，或者直接告诉系统这一阶段已经可以收住..."
+                  className="w-full resize-none bg-transparent px-1 py-1 text-sm leading-relaxed text-slate-700 dark:text-slate-200 placeholder:text-slate-350/70 dark:placeholder:text-slate-500/70 outline-none"
+                />
+
+                {/* Action row */}
+                <div className="mt-2 flex justify-end gap-1.5">
+                  {selectedStage.status === "approved" && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      type="button"
+                      onClick={requestRevision}
+                      disabled={revising || sending || approving || isBlockedByUpstream || !draft.trim()}
+                      className="h-7 gap-1 text-xs"
+                    >
+                      {revising ? <Loader2 size={12} className="animate-spin" /> : <GitBranch size={12} />}
+                      发起调整
+                    </Button>
+                  )}
+                  <Button
+                    type="submit"
+                    size="sm"
+                    disabled={sending || approving || revising || isBlockedByUpstream || selectedStage.status === "approved" || !draft.trim()}
+                    className="h-7 gap-1 bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-sm shadow-indigo-500/20 hover:from-indigo-700 hover:to-violet-700 px-3 text-xs"
+                  >
+                    {sending ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+                    发送
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    type="button"
+                    onClick={approveStage}
+                    disabled={approving || sending || revising || isBlockedByUpstream || selectedStage.status === "approved"}
+                    className="h-7 gap-1 text-xs"
+                  >
+                    {approving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                    {hasStageConclusion ? "确认通过" : stageReadyToFinalize ? "生成结论" : "继续确认"}
+                  </Button>
+                </div>
+              </div>
               </form>
-            </div>
           </section>
 
-          {/* Right column — artifacts — Glassmorphism */}
-          <aside className="w-[280px] shrink-0 border-l border-slate-200/60 dark:border-slate-700/40 flex flex-col bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm">
-            <div className="flex items-center justify-between px-3 py-2.5 border-b border-slate-200/60 dark:border-slate-700/40">
-              <h3 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">产物</h3>
+          {/* Right column — artifacts */}
+          <aside className="w-[300px] shrink-0 self-start rounded-lg bg-white dark:bg-slate-900 shadow-[0_1px_3px_rgba(0,0,0,0.06),0_1px_2px_rgba(0,0,0,0.04)] bg-no-repeat min-h-[325px]" style={{ backgroundImage: "url('/model-bg.png')", backgroundPosition: 'center 0px', backgroundSize: 'contain' }}>
+            <div className="px-4 pt-5 pb-4 flex items-center justify-between">
+              <h3 className="text-base font-semibold leading-none text-[#333] dark:text-slate-200">产物</h3>
               <a
                 href={buildAllArtifactsDownloadUrl(flowId)}
                 download
-                className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 transition-colors"
+                className="inline-flex items-center gap-1 rounded px-2 py-1 text-[10px] leading-4 text-indigo-600 dark:text-indigo-400 hover:brightness-95 transition-colors"
+                style={{ backgroundColor: 'var(--color-indigo-100, #e0e7ff)' }}
               >
                 <FileDown size={12} />
                 下载全部
@@ -1472,15 +1469,14 @@ export default function FlowDetailPage() {
             </div>
 
             {/* Current stage artifacts */}
-            <div className="border-b border-slate-200/60 dark:border-slate-700/40 px-3 py-2.5 bg-indigo-50/40 dark:bg-indigo-500/5">
+            <div className="border-b border-slate-200/50 dark:border-slate-700/30 px-4 py-3">
               <div className="flex items-center justify-between mb-1.5">
                 <div className="flex items-center gap-1.5">
-                  <span className="flex size-4 items-center justify-center rounded-full bg-indigo-100 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400">
-                    <Sparkles size={9} />
+                  <span className="flex size-7 items-center justify-center rounded-lg bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04)] text-indigo-600 dark:bg-slate-800 dark:text-indigo-400">
+                    <currentMeta.icon size={14} />
                   </span>
-                  <span className="text-xs font-medium text-indigo-600 dark:text-indigo-400">当前阶段</span>
+                  <span className="text-[13px] font-semibold text-[#333] dark:text-slate-200">{currentMeta.label}</span>
                 </div>
-                <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">{currentMeta.label}</span>
               </div>
               {currentStageArtifacts.length > 0 ? (
                 <div className="space-y-1">
@@ -1508,10 +1504,8 @@ export default function FlowDetailPage() {
             </div>
 
             {/* All artifacts */}
-            <div className="flex-1 overflow-y-auto px-3 py-2.5">
-              {artifactGroups.filter((g) => g.stage.stage_key !== selectedStage.stage_key).length === 0 && currentStageArtifacts.length === 0 ? (
-                <div className="py-8 text-center text-xs text-slate-400">还没有可归档的阶段产物</div>
-              ) : (
+            {artifactGroups.filter((g) => g.stage.stage_key !== selectedStage.stage_key).length > 0 && (
+            <div className="flex-1 overflow-y-auto px-4 py-3">
                 <div className="space-y-3">
                   {artifactGroups
                     .filter((group) => group.stage.stage_key !== selectedStage.stage_key)
@@ -1533,7 +1527,7 @@ export default function FlowDetailPage() {
                             {group.artifacts.map((artifact, index) => (
                               <div
                                 key={`${group.stage.id}-${index}-${artifact.url || artifact.artifact_id || artifact.label}`}
-                                className="flex items-center justify-between rounded-xl bg-white/80 dark:bg-slate-800/60 backdrop-blur-sm px-2.5 py-1.5 ring-1 ring-slate-200/60 dark:ring-slate-700/40 hover:ring-slate-300 dark:hover:ring-slate-600 transition-all"
+                                className="flex items-center justify-between rounded-lg bg-slate-50 dark:bg-slate-800 px-2.5 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 transition-all"
                               >
                                 <div className="flex items-center gap-1.5 min-w-0">
                                   <FileText size={12} className="shrink-0 text-slate-400" />
@@ -1560,8 +1554,8 @@ export default function FlowDetailPage() {
                       </div>
                     ))}
                 </div>
-              )}
             </div>
+            )}
           </aside>
         </div>
       </main>
