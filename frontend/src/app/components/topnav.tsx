@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
 import {
-  House, UsersRound, Users,
+  House, Users,
   Wrench, BarChart3, Settings, Sun, Moon, LogOut, UserCircle,
   ChevronDown, FolderKanban
 } from "lucide-react";
@@ -13,7 +13,6 @@ import { useAuth } from "@/lib/auth";
 const NAV = [
   { href: "/", label: "首页", icon: House, match: ["/"] },
   { href: "/flows", label: "项目流程", icon: FolderKanban, match: ["/flows", "/workspaces"] },
-  { href: "/roundtable", label: "圆桌讨论", icon: UsersRound },
 ];
 
 const SETTINGS_NAV = [
