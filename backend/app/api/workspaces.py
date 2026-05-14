@@ -16,14 +16,13 @@ from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sse_starlette.sse import EventSourceResponse
 from starlette.background import BackgroundTask
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
 from app.core.database import async_session, get_db
 from app.api.flow_schemas import (
     CreateWorkspaceRequest,
-    GenerateStageRequest,
     SendWorkspaceStageMessageRequest,
     StageFeedbackRequest,
     StageRunSettingsRequest,
@@ -36,7 +35,6 @@ from app.api.flow_schemas import (
     WorkspaceStageResponse,
 )
 from app.api.authz import get_user_from_query_token
-from app.api.agents import BUILTIN_AGENTS
 from app.models.models import (
     Artifact,
     PlanningSession,
@@ -51,31 +49,17 @@ from app.models.models import (
     WorkspaceStatus,
 )
 from app.services.flows.conversation import (
-    assess_stage_finalization_readiness as _assess_stage_finalization_readiness,
     append_stage_message as _append_stage_message,
-    build_finalize_not_ready_instruction as _build_finalize_not_ready_instruction,
-    build_model_unavailable_stage_output as _build_model_unavailable_stage_output,
     ensure_stage_seed_messages as _ensure_stage_seed_messages,
-    finalize_stage_conclusion as _finalize_stage_conclusion,
     generate_and_append_stage_reply as _generate_and_append_stage_reply,
-    generate_requirements_stage_content as _generate_requirements_stage_content,
     get_stage_messages as _get_stage_messages,
-    stage_is_ready_to_finalize as _stage_is_ready_to_finalize,
-    should_finalize_stage_message as _should_finalize_stage_message,
     stream_stage_reply as _stream_stage_reply,
-    stream_requirements_stage_document as _stream_requirements_stage_document,
 )
 from app.services.flows.artifacts import (
     create_workspace_artifact as _create_workspace_artifact,
     find_latest_workspace_artifact as _find_latest_workspace_artifact,
-    generate_workspace_acceptance_stage as _generate_workspace_acceptance_stage,
-    generate_workspace_development_stage as _generate_workspace_development_stage,
     load_recommendation as _load_recommendation,
     upsert_artifact_reference as _upsert_artifact_reference,
-)
-from app.services.flows.contracts import (
-    parse_json_object as _parse_json_object,
-    sanitize_llm_artifact as _sanitize_llm_artifact,
 )
 from app.services.flows.memory import (
     latest_conclusion_artifact_id as _latest_conclusion_artifact_id,
@@ -83,67 +67,74 @@ from app.services.flows.memory import (
     sync_memories_from_source as _sync_memories_from_source,
 )
 from app.services.flows.stage_state import (
+    default_recommendation as _default_recommendation,
     has_generated_recommendation as _has_generated_recommendation,
     next_stage_key as _next_stage_key,
     seed_stages as _seed_stages,
 )
-from app.services.flows.stage_generation import (
-    generate_stage_artifact_with_llm as _generate_stage_artifact_with_llm_service,
-    resolve_generation_model as _resolve_generation_model,
-    workspace_stage_agent_name as _workspace_stage_agent_name,
-)
+from app.services.flows.stage_generation import resolve_generation_model as _resolve_generation_model
+from app.services.flows.stage_snapshots import with_stage_snapshot as _with_stage_snapshot
 
 router = APIRouter()
 optional_bearer = HTTPBearer(auto_error=False)
 logger = logging.getLogger(__name__)
 
 
-STAGE_AGENT_NAMES: dict[WorkspaceStageKey, str] = {
-    WorkspaceStageKey.REQUIREMENTS: "requirements-analyst",
-    WorkspaceStageKey.PRODUCT: "product-designer",
-    WorkspaceStageKey.UI_DIRECTION: "product-designer",
-    WorkspaceStageKey.PROTOTYPE: "ui-ux-designer",
-    WorkspaceStageKey.TECHNICAL: "technical-architect",
-    WorkspaceStageKey.DEVELOPMENT: "spec-writer",
-    WorkspaceStageKey.ACCEPTANCE: "qa-reviewer",
-    WorkspaceStageKey.DEPLOYMENT: "orchestrator",
-}
-
-BUILTIN_AGENT_MAP = {agent["name"]: agent for agent in BUILTIN_AGENTS}
-
-
 STAGE_DEFINITIONS = [
     (
         WorkspaceStageKey.REQUIREMENTS,
         "需求确认",
-        "先对齐这到底是个什么产品，再确认主要用户、核心用途和边界。",
-        ["产品定位", "主要用户", "边界前提"],
+        "只确认这是什么产品：基本使用或呈现方式怎么成立、哪些前提会影响后续骨架。",
+        ["产品定义", "基本使用方式", "主流程骨架", "结构性前提"],
     ),
     (
         WorkspaceStageKey.PRODUCT,
         "方案设计",
-        "先整理功能模块和模块关系，再明确页面结构和主要流程。",
+        "把方案骨架搭起来：功能模块怎么分、模块怎么协作、页面结构怎么组织、主要流程怎么走。",
         ["功能模块", "模块关系", "页面结构与流程"],
     ),
     (
         WorkspaceStageKey.UI_DIRECTION,
         "细节确认",
-        "确认角色权限、状态流转、异常处理、数据口径和关键边界。",
+        "把业务规则说透：角色权限、状态流转、异常处理、数据口径和关键边界怎么定。",
         ["规则边界", "状态流转", "异常与数据口径"],
     ),
     (
         WorkspaceStageKey.TECHNICAL,
         "开发方案",
-        "整理可交给开发接手的实现方案，包括模块拆分、接口数据和依赖风险。",
+        "整理开发可直接接手的方案：实现路径、模块拆分、接口数据组织、依赖和风险。",
         ["模块拆分", "接口与数据", "依赖与风险"],
     ),
     (
         WorkspaceStageKey.DEPLOYMENT,
-        "交付清单",
-        "整理全部已确认文档，支持单独下载或整体打包下载。",
-        ["文档清单", "单独下载", "打包下载"],
+        "最终交付",
+        "整理一份最终总结结论，并同步形成最后的交付文档，支持单独下载或整体打包下载。",
+        ["最终总结", "交付文档", "整体打包下载"],
     ),
 ]
+
+STAGE_DEFINITION_MAP = {
+    stage_key: {
+        "title": title,
+        "description": description,
+        "focus": focus,
+    }
+    for stage_key, title, description, focus in STAGE_DEFINITIONS
+}
+
+
+def _normalize_stage_metadata(stage: WorkspaceStage) -> bool:
+    canonical = STAGE_DEFINITION_MAP.get(stage.stage_key)
+    if not canonical:
+        return False
+    changed = False
+    if stage.title != canonical["title"]:
+        stage.title = canonical["title"]
+        changed = True
+    if (stage.description or "") != canonical["description"]:
+        stage.description = canonical["description"]
+        changed = True
+    return changed
 
 
 async def _stream_with_fresh_session(
@@ -177,7 +168,6 @@ async def _stream_with_fresh_session(
                 upsert_artifact_reference=_upsert_artifact_reference,
                 serialize_stage_response=lambda item: WorkspaceStageResponse.from_model(item).model_dump(mode="json"),
                 serialize_stage_message_response=lambda item: WorkspaceStageMessageResponse.from_model(item, workspace.id).model_dump(mode="json"),
-                parse_json_object=_parse_json_object,
                 force_finalize=force_finalize,
                 runtime_options=runtime_options,
             )
@@ -290,13 +280,71 @@ def _make_generation_resolver(runtime_options: Optional[Dict[str, Any]] = None):
     return _resolver
 
 
+async def _sync_stage_memories_after_user_message(
+    *,
+    workspace_id: str,
+    stage_key: WorkspaceStageKey,
+    user_id: str,
+    source_text: str,
+    source_message_id: str,
+    runtime_options: Optional[Dict[str, Any]] = None,
+) -> None:
+    if not source_text.strip():
+        return
+
+    async with async_session() as session:
+        try:
+            user = await session.get(User, user_id)
+            workspace = await session.get(Workspace, workspace_id)
+            if not user or not workspace:
+                return
+
+            result = await session.execute(
+                select(WorkspaceStage).where(
+                    WorkspaceStage.workspace_id == workspace_id,
+                    WorkspaceStage.stage_key == stage_key,
+                )
+            )
+            stage = result.scalar_one_or_none()
+            if not stage:
+                return
+
+            await _sync_memories_from_source(
+                db=session,
+                user=user,
+                workspace=workspace,
+                stage=stage,
+                source_kind="user_message",
+                source_text=source_text,
+                source_message_id=source_message_id,
+                resolve_generation_model=_make_generation_resolver(runtime_options),
+            )
+            await session.commit()
+        except Exception as exc:
+            if session.in_transaction():
+                await session.rollback()
+            logger.warning(
+                "async user-message memory sync failed: workspace=%s stage=%s message=%s reason=%s",
+                workspace_id,
+                stage_key.value,
+                source_message_id,
+                exc,
+            )
+
+
 async def _get_stages(db: AsyncSession, workspace_id: str) -> List[WorkspaceStage]:
     result = await db.execute(
         select(WorkspaceStage)
         .where(WorkspaceStage.workspace_id == workspace_id)
         .order_by(WorkspaceStage.order)
     )
-    return list(result.scalars().all())
+    stages = list(result.scalars().all())
+    changed = False
+    for stage in stages:
+        changed = _normalize_stage_metadata(stage) or changed
+    if changed:
+        await db.flush()
+    return stages
 
 
 def _require_stage_predecessors_approved(stages: List[WorkspaceStage], stage: WorkspaceStage):
@@ -314,35 +362,30 @@ def _require_stage_predecessors_approved(stages: List[WorkspaceStage], stage: Wo
         )
 
 
-async def _generate_stage_artifact_with_llm(
-    db: AsyncSession,
-    user: User,
-    workspace: Workspace,
-    stages: List[WorkspaceStage],
-    stage: WorkspaceStage,
-    instruction: Optional[str],
-    runtime_options: Optional[Dict[str, Any]] = None,
-) -> Optional[tuple[Dict[str, Any], str]]:
-    return await _generate_stage_artifact_with_llm_service(
-        db=db,
-        user=user,
-        workspace=workspace,
-        stages=stages,
-        stage=stage,
-        instruction=instruction,
-        runtime_options=runtime_options,
-        stage_agent_names=STAGE_AGENT_NAMES,
-        builtin_agent_map=BUILTIN_AGENT_MAP,
-        parse_json_object=_parse_json_object,
-        sanitize_llm_artifact=_sanitize_llm_artifact,
-    )
-
-
 def _stage_content(stages: List[WorkspaceStage], key: WorkspaceStageKey) -> str:
     for stage in stages:
         if stage.stage_key == key and stage.content:
             return stage.content
     return ""
+
+
+async def _reset_stage_generated_state(
+    db: AsyncSession,
+    stage: WorkspaceStage,
+) -> None:
+    canonical = STAGE_DEFINITION_MAP.get(stage.stage_key) or {}
+    focus = canonical.get("focus") or []
+    stage.content = None
+    stage.recommendation_json = json.dumps(
+        _default_recommendation(stage.stage_key, focus),
+        ensure_ascii=False,
+    )
+    stage.approved_by = None
+    stage.approved_at = None
+
+    await db.execute(
+        delete(WorkspaceStageMessage).where(WorkspaceStageMessage.stage_id == stage.id)
+    )
 
 
 async def _stage_has_conclusion_artifact(db: AsyncSession, stage: WorkspaceStage) -> bool:
@@ -674,6 +717,7 @@ async def bootstrap_workspace_stage_stream(
         workspace_id=workspace_id,
         stage_key=stage_key,
         user=user,
+        force_finalize=stage_key == WorkspaceStageKey.DEPLOYMENT,
         runtime_options=runtime_options,
     )
     return EventSourceResponse(generator)
@@ -712,7 +756,7 @@ async def send_workspace_stage_message(
         and last_message.content.strip() == content
     )
     if not is_retry_after_stream_failure:
-        await _append_stage_message(
+        appended_user_message = await _append_stage_message(
             db=db,
             stage=stage,
             role="user",
@@ -720,60 +764,32 @@ async def send_workspace_stage_message(
             kind="chat",
         )
         await db.commit()
+        asyncio.create_task(
+            _sync_stage_memories_after_user_message(
+                workspace_id=workspace.id,
+                stage_key=stage.stage_key,
+                user_id=user.id,
+                source_text=content,
+                source_message_id=appended_user_message.id,
+                runtime_options=runtime_options,
+            )
+        )
         messages = await _get_stage_messages(db, stage.id)
 
-    extra_instruction: Optional[str] = None
-    finalize_requested = await _should_finalize_stage_message(
+    await _generate_and_append_stage_reply(
         db=db,
         user=user,
         workspace=workspace,
+        stages=stages,
         stage=stage,
         messages=messages,
+        extra_instruction=None,
         resolve_generation_model=resolve_generation_model,
-        parse_json_object=_parse_json_object,
+        runtime_options=runtime_options,
+        create_workspace_artifact=_create_workspace_artifact,
+        load_recommendation=_load_recommendation,
+        upsert_artifact_reference=_upsert_artifact_reference,
     )
-    if finalize_requested:
-        if _stage_is_ready_to_finalize(stage, messages):
-            can_finalize, blockers = True, []
-        else:
-            can_finalize, blockers = await _assess_stage_finalization_readiness(
-                db=db,
-                user=user,
-                workspace=workspace,
-                stage=stage,
-                messages=messages,
-                resolve_generation_model=resolve_generation_model,
-            )
-        if can_finalize:
-            await _finalize_stage_conclusion(
-                db=db,
-                user=user,
-                workspace=workspace,
-                stages=stages,
-                stage=stage,
-                messages=messages,
-                resolve_generation_model=resolve_generation_model,
-                create_workspace_artifact=_create_workspace_artifact,
-                load_recommendation=_load_recommendation,
-                upsert_artifact_reference=_upsert_artifact_reference,
-                runtime_options=runtime_options,
-            )
-        else:
-            extra_instruction = _build_finalize_not_ready_instruction(stage, blockers)
-
-    if extra_instruction is not None or not finalize_requested:
-        await _generate_and_append_stage_reply(
-            db=db,
-            user=user,
-            workspace=workspace,
-            stages=stages,
-            stage=stage,
-            messages=messages,
-            extra_instruction=extra_instruction,
-            resolve_generation_model=resolve_generation_model,
-            generate_stage_artifact_with_llm=_generate_stage_artifact_with_llm,
-            runtime_options=runtime_options,
-        )
 
     await db.commit()
     await db.refresh(stage)
@@ -824,17 +840,17 @@ async def stream_workspace_stage_message(
             content=content,
             kind="chat",
         )
-        await _sync_memories_from_source(
-            db=db,
-            user=user,
-            workspace=workspace,
-            stage=stage,
-            source_kind="user_message",
-            source_text=content,
-            source_message_id=appended_user_message.id,
-            resolve_generation_model=_resolve_generation_model,
-        )
         await db.commit()
+        asyncio.create_task(
+            _sync_stage_memories_after_user_message(
+                workspace_id=workspace.id,
+                stage_key=stage.stage_key,
+                user_id=user.id,
+                source_text=content,
+                source_message_id=appended_user_message.id,
+                runtime_options=runtime_options,
+            )
+        )
         messages = await _get_stage_messages(db, stage.id)
 
     generator = await _stream_with_fresh_session(
@@ -919,135 +935,6 @@ async def update_workspace_stage(
     return WorkspaceStageResponse.from_model(stage)
 
 
-@router.post("/workspaces/{workspace_id}/stages/{stage_key}/generate", response_model=WorkspaceStageResponse)
-async def generate_workspace_stage(
-    workspace_id: str,
-    stage_key: WorkspaceStageKey,
-    req: GenerateStageRequest,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    workspace, member = await _get_accessible_workspace(db, workspace_id, user)
-    _require_editor(member)
-
-    stages = await _get_stages(db, workspace_id)
-    stage = next((item for item in stages if item.stage_key == stage_key), None)
-    if not stage:
-        raise HTTPException(status_code=404, detail="Workspace stage not found")
-    _require_stage_predecessors_approved(stages, stage)
-
-    if stage.stage_key == WorkspaceStageKey.DEVELOPMENT:
-        stage = await _generate_workspace_development_stage(
-            db=db,
-            workspace=workspace,
-            user=user,
-            stages=stages,
-            stage=stage,
-            workspace_stage_agent_name=_workspace_stage_agent_name,
-        )
-        await db.commit()
-        await db.refresh(stage)
-        return WorkspaceStageResponse.from_model(stage)
-
-    if stage.stage_key == WorkspaceStageKey.ACCEPTANCE:
-        stage = await _generate_workspace_acceptance_stage(
-            db=db,
-            workspace=workspace,
-            user=user,
-            stages=stages,
-            stage=stage,
-            workspace_stage_agent_name=_workspace_stage_agent_name,
-        )
-        await db.commit()
-        await db.refresh(stage)
-        return WorkspaceStageResponse.from_model(stage)
-
-    if stage.stage_key == WorkspaceStageKey.REQUIREMENTS:
-        runtime_options = _build_runtime_options(req.settings)
-        recommendation, content = await _generate_requirements_stage_content(
-            db=db,
-            user=user,
-            workspace=workspace,
-            stages=stages,
-            stage=stage,
-            instruction=req.instruction,
-            resolve_generation_model=_make_generation_resolver(runtime_options),
-            runtime_options=runtime_options,
-        )
-        stage.recommendation_json = json.dumps(recommendation, ensure_ascii=False)
-        stage.content = content
-        stage.status = WorkspaceStageStatus.AWAITING_CONFIRMATION
-        stage.approved_by = None
-        stage.approved_at = None
-        workspace.updated_at = datetime.now(timezone.utc)
-        await db.commit()
-        await db.refresh(stage)
-        return WorkspaceStageResponse.from_model(stage)
-
-    generated = await _generate_stage_artifact_with_llm(
-        db=db,
-        user=user,
-        workspace=workspace,
-        stages=stages,
-        stage=stage,
-        instruction=req.instruction,
-        runtime_options=_build_runtime_options(req.settings),
-    )
-    if generated:
-        recommendation, content = generated
-    else:
-        recommendation, content = _build_model_unavailable_stage_output(
-            stage,
-            summary=f"{stage.title}阶段当前没有拿到可用的大模型回复。",
-            recommended_action="请先检查模型配置；恢复后再继续当前阶段。",
-            focus=["模型可用性", "真实阶段输出", "避免模板兜底"],
-        )
-    stage.recommendation_json = json.dumps(recommendation, ensure_ascii=False)
-    stage.content = content
-    stage.status = WorkspaceStageStatus.AWAITING_CONFIRMATION
-    stage.approved_by = None
-    stage.approved_at = None
-    workspace.updated_at = datetime.now(timezone.utc)
-    await db.commit()
-    await db.refresh(stage)
-    return WorkspaceStageResponse.from_model(stage)
-
-
-@router.post("/workspaces/{workspace_id}/stages/{stage_key}/generate-stream")
-async def generate_workspace_stage_stream(
-    workspace_id: str,
-    stage_key: WorkspaceStageKey,
-    req: GenerateStageRequest,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    workspace, member = await _get_accessible_workspace(db, workspace_id, user)
-    _require_editor(member)
-
-    stages = await _get_stages(db, workspace_id)
-    stage = next((item for item in stages if item.stage_key == stage_key), None)
-    if not stage:
-        raise HTTPException(status_code=404, detail="Workspace stage not found")
-
-    if stage.stage_key != WorkspaceStageKey.REQUIREMENTS:
-        raise HTTPException(status_code=400, detail="当前仅需求确认阶段支持流式生成")
-
-    generator = await _stream_requirements_stage_document(
-        db=db,
-        user=user,
-        workspace=workspace,
-        stages=stages,
-        stage=stage,
-        instruction=req.instruction,
-        resolve_generation_model=_make_generation_resolver(_build_runtime_options(req.settings)),
-        runtime_options=_build_runtime_options(req.settings),
-        build_model_unavailable_stage_output=_build_model_unavailable_stage_output,
-        generate_requirements_stage_content=_generate_requirements_stage_content,
-        serialize_stage_response=lambda item: WorkspaceStageResponse.from_model(item).model_dump(mode="json"),
-    )
-    return EventSourceResponse(generator)
-
-
 @router.post("/workspaces/{workspace_id}/stages/{stage_key}/approve", response_model=WorkspaceResponse)
 async def approve_workspace_stage(
     workspace_id: str,
@@ -1072,6 +959,8 @@ async def approve_workspace_stage(
 
     conclusion_artifact_id = _latest_conclusion_artifact_id(stage)
     stage_content = stage.content or ""
+    recommendation = _load_recommendation(stage)
+    stage.recommendation_json = json.dumps(_with_stage_snapshot(recommendation, stage), ensure_ascii=False)
 
     stage.status = WorkspaceStageStatus.APPROVED
     stage.approved_by = user.id
@@ -1081,7 +970,7 @@ async def approve_workspace_stage(
     if next_key:
         workspace.current_stage = next_key
         next_stage = stage_map.get(next_key)
-        if next_stage and next_stage.status == WorkspaceStageStatus.DRAFT:
+        if next_stage and next_stage.status in {WorkspaceStageStatus.DRAFT, WorkspaceStageStatus.REVISION_REQUESTED}:
             next_stage.status = WorkspaceStageStatus.AWAITING_CONFIRMATION
     else:
         workspace.current_stage = stage_key
@@ -1148,9 +1037,8 @@ async def request_stage_revision(
             continue
         if item.status != WorkspaceStageStatus.DRAFT:
             item.status = WorkspaceStageStatus.REVISION_REQUESTED
-            item.approved_by = None
-            item.approved_at = None
             item.user_feedback = f"上游阶段「{stage.title}」已调整，本阶段需要重新确认。"
+            await _reset_stage_generated_state(db, item)
 
     workspace.current_stage = stage.stage_key
     await _supersede_stage_memories_from_order(

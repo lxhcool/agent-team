@@ -206,7 +206,7 @@ class ProviderAdapter:
         Yields content chunks as they arrive for real-time display.
         Handles: None content deltas, [DONE] marker, malformed data lines.
         """
-        timeout = httpx.Timeout(90.0, connect=15.0, read=90.0, write=30.0)
+        timeout = httpx.Timeout(240.0, connect=15.0, read=240.0, write=30.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
             try:
                 async with client.stream("POST", url, headers=headers, json=payload) as resp:
@@ -214,11 +214,14 @@ class ProviderAdapter:
                         body = await resp.aread()
                         raise LLMError(f"LLM API error: {resp.status_code} - {body[:500]!r}")
 
+                    saw_done = False
+                    finish_reason = ""
                     async for line in resp.aiter_lines():
                         if not line.startswith("data: "):
                             continue
                         data_str = line[6:].strip()
                         if data_str == "[DONE]":
+                            saw_done = True
                             break
                         try:
                             import json
@@ -227,6 +230,9 @@ class ProviderAdapter:
                             if not choices:
                                 continue
                             choice = choices[0]
+                            current_finish_reason = choice.get("finish_reason")
+                            if isinstance(current_finish_reason, str) and current_finish_reason.strip():
+                                finish_reason = current_finish_reason.strip()
                             delta = choice.get("delta", {})
                             content = self._extract_stream_text(delta.get("content"))
                             if not content:
@@ -251,6 +257,11 @@ class ProviderAdapter:
                                 yield {"type": "reasoning", "content": reasoning_content}
                         except (json.JSONDecodeError, IndexError, KeyError):
                             continue
+                    yield {
+                        "type": "meta",
+                        "finish_reason": finish_reason,
+                        "saw_done": "1" if saw_done else "0",
+                    }
             except httpx.HTTPError as e:
                 raise LLMError(f"LLM stream request failed: {type(e).__name__}: {e}") from e
 

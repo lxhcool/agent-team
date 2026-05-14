@@ -4,7 +4,30 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Clock3, Loader2, Sparkles, Trash2, ChevronRight, X,
+  PackageCheck, Eclipse, ReceiptText, FileText,
+  FolderCode, CheckCircle2, ClipboardList,
 } from "lucide-react";
+
+type StageKey =
+  | "requirements"
+  | "product"
+  | "ui_direction"
+  | "prototype"
+  | "technical"
+  | "development"
+  | "acceptance"
+  | "deployment";
+
+const STAGE_ICON: Record<StageKey, React.ComponentType<{ size?: number; className?: string }>> = {
+  requirements: PackageCheck,
+  product: Eclipse,
+  ui_direction: ReceiptText,
+  prototype: FileText,
+  technical: FolderCode,
+  development: FileText,
+  acceptance: CheckCircle2,
+  deployment: ClipboardList,
+};
 
 import { TopNav } from "../components/topnav";
 import { useConfirm } from "@/components/ui/confirm-dialog";
@@ -147,7 +170,10 @@ export default function FlowsPage() {
                       <div className="flex items-start gap-3">
                         {/* Icon */}
                         <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
-                          <Sparkles size={16} />
+                          {(() => {
+                            const StageIcon = STAGE_ICON[flow.current_stage as StageKey] || Sparkles;
+                            return <StageIcon size={16} />;
+                          })()}
                         </div>
                         {/* Info */}
                         <div className="min-w-0 flex-1 pr-5">
@@ -156,8 +182,6 @@ export default function FlowsPage() {
                           {/* Line 2: Status · Platform · Time */}
                           <div className="mt-1 flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
                             <span className="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[9px] font-semibold" style={{ background: st.bg, color: st.color as string }}>{st.icon}{st.label}</span>
-                            <span className="text-slate-300 dark:text-slate-600">·</span>
-                            <span>{flow.target_platform}</span>
                             <span className="text-slate-300 dark:text-slate-600">·</span>
                             <span>{formatRelative(flow.updated_at)}</span>
                           </div>

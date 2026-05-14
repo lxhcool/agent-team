@@ -51,11 +51,6 @@ class StageAssistantSettings(BaseModel):
     enable_stage_skills: bool = True
 
 
-class GenerateStageRequest(BaseModel):
-    instruction: Optional[str] = None
-    settings: Optional[StageAssistantSettings] = None
-
-
 class StageRunSettingsRequest(BaseModel):
     settings: Optional[StageAssistantSettings] = None
 

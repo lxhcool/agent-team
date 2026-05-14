@@ -9,6 +9,7 @@ import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import {
   ArrowLeft,
+  ArrowUp,
   Brain,
   Check,
   CheckCircle2,
@@ -19,11 +20,11 @@ import {
   FileText,
   FolderCode,
   FolderKanban,
-  GitBranch,
   Layers3,
   Loader2,
   PackageCheck,
   Paperclip,
+  Plus,
   ReceiptText,
   Send,
   Sparkles,
@@ -174,21 +175,21 @@ const STAGE_META: Record<
   requirements: {
     label: "需求确认",
     short: "01",
-    description: "先对齐这到底是个什么产品，再确认主要用户、核心用途和边界。",
+    description: "只确认这是什么产品：基本使用或呈现方式怎么成立、哪些前提会影响后续骨架。",
     deliverable: "需求确认文档",
     icon: PackageCheck,
   },
   product: {
     label: "方案设计",
     short: "02",
-    description: "先整理功能模块和模块关系，再落到页面结构和主要流程。",
+    description: "把方案骨架搭起来：功能模块怎么分、模块怎么协作、页面结构怎么组织、主要流程怎么走。",
     deliverable: "方案设计文档",
     icon: Eclipse,
   },
   ui_direction: {
     label: "细节确认",
     short: "03",
-    description: "锁定角色权限、状态流转、异常处理、数据口径和关键边界。",
+    description: "把业务规则说透：角色权限、状态流转、异常处理、数据口径和关键边界怎么定。",
     deliverable: "细节确认文档",
     icon: ReceiptText,
   },
@@ -202,29 +203,29 @@ const STAGE_META: Record<
   technical: {
     label: "开发方案",
     short: "04",
-    description: "整理开发可接手的实现方案，包括模块拆分、接口数据和依赖风险。",
+    description: "整理开发可直接接手的方案：实现路径、模块拆分、接口数据组织、依赖和风险。",
     deliverable: "开发方案文档",
     icon: FolderCode,
   },
   development: {
-    label: "实现准备",
+    label: "交付准备",
     short: "05",
-    description: "整理给本地 IDE 接手的说明和拆分建议。",
-    deliverable: "实现准备文档",
+    description: "整理进入继续落地前需要的交付准备说明。",
+    deliverable: "交付准备文档",
     icon: FileText,
   },
   acceptance: {
-    label: "验收口径",
+    label: "交付检查",
     short: "06",
-    description: "明确怎么判断当前版本算完成。",
-    deliverable: "验收口径文档",
+    description: "明确怎么判断当前交付物已经足够继续流转。",
+    deliverable: "交付检查文档",
     icon: CheckCircle2,
   },
   deployment: {
-    label: "交付清单",
+    label: "最终交付",
     short: "05",
-    description: "整理全部已确认文档，支持单独下载和整体打包下载。",
-    deliverable: "交付清单",
+    description: "整理一份最终总结结论，并同步形成最后的交付文档，支持单独下载或整体打包下载。",
+    deliverable: "最终交付文档",
     icon: ClipboardList,
   },
 };
@@ -272,6 +273,35 @@ function buildArtifactDownloadUrl(artifactId: string | null | undefined, fallbac
 
 function buildAllArtifactsDownloadUrl(flowId: string) {
   return withAuthToken(`/api/flows/${flowId}/artifacts/download-all`);
+}
+
+function artifactBelongsToStage(stage: FlowStage, artifact: RecommendationArtifact) {
+  const type = (artifact.type || "").trim().toLowerCase();
+  if (!type) return true;
+  return type.startsWith(stage.stage_key);
+}
+
+function artifactTimestampValue(artifact: RecommendationArtifact) {
+  const raw = artifact.created_at ? new Date(artifact.created_at).getTime() : 0;
+  return Number.isFinite(raw) ? raw : 0;
+}
+
+function dedupeStageArtifacts(artifacts: RecommendationArtifact[]) {
+  const latestByType = new Map<string, RecommendationArtifact>();
+  for (const artifact of artifacts) {
+    const key =
+      (artifact.type || "").trim().toLowerCase() ||
+      (artifact.label || "").trim().toLowerCase() ||
+      (artifact.artifact_id || "").trim().toLowerCase();
+    if (!key) continue;
+    const existing = latestByType.get(key);
+    if (!existing || artifactTimestampValue(artifact) >= artifactTimestampValue(existing)) {
+      latestByType.set(key, artifact);
+    }
+  }
+  return Array.from(latestByType.values()).sort(
+    (left, right) => artifactTimestampValue(right) - artifactTimestampValue(left),
+  );
 }
 
 function buildStreamApiUrl(path: string) {
@@ -326,23 +356,6 @@ function appendStageMessage(messages: StageMessage[], message: StageMessage) {
   return [...messages, message];
 }
 
-function buildPartialAssistantMessage(
-  stage: FlowStage,
-  stream: StageStreamState,
-  content: string,
-): StageMessage {
-  return {
-    id: `${stream.messageId}-partial`,
-    stage_id: stage.id,
-    role: "assistant",
-    kind: stream.kind,
-    content,
-    artifact_id: null,
-    artifact_url: null,
-    created_at: new Date().toISOString(),
-  };
-}
-
 function parseSseChunk(chunk: string) {
   const lines = chunk.split("\n");
   let event = "message";
@@ -361,6 +374,18 @@ function parseSseChunk(chunk: string) {
 
 function normalizeSseBuffer(value: string) {
   return value.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
+
+function mergeReasoningPreview(current: string, incoming: string) {
+  const merged = `${current || ""}${incoming || ""}`.replace(/\s+/g, " ").trim();
+  if (!merged) return "";
+  return merged.length > 140 ? `…${merged.slice(-140)}` : merged;
+}
+
+function splitStreamingChunk(content: string, maxSize = 28) {
+  if (!content) return [];
+  return content.match(new RegExp(`[\\s\\S]{1,${maxSize}}`, "g")) || [];
 }
 
 function ThinkingDots() {
@@ -450,7 +475,6 @@ export default function FlowDetailPage() {
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [approving, setApproving] = useState(false);
-  const [revising, setRevising] = useState(false);
   const [error, setError] = useState("");
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [streamByStage, setStreamByStage] = useState<Record<string, StageStreamState | null>>({});
@@ -458,6 +482,7 @@ export default function FlowDetailPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const loadedStageKeysRef = useRef<Set<string>>(new Set());
   const bootstrappingStageKeysRef = useRef<Set<string>>(new Set());
+  const bootstrapFailedStageKeysRef = useRef<Set<string>>(new Set());
   const providerByModelId = useMemo(
     () => new Map(models.map((item) => [item.model_id, item.provider])),
     [models],
@@ -518,7 +543,10 @@ export default function FlowDetailPage() {
     lastConclusionIndex !== -1 &&
     lastConclusionIndex > lastUserMessageIndex;
   const stageReadyToFinalize = Boolean(selectedStage?.recommendation?.stage_runtime?.ready_to_finalize);
-  const stageReadinessBlockers = selectedStage?.recommendation?.stage_runtime?.readiness_blockers || [];
+  const stageReadinessBlockers = hasStageConclusion
+    ? []
+    : selectedStage?.recommendation?.stage_runtime?.readiness_blockers || [];
+  const isFinalStage = selectedStage?.stage_key === "deployment";
 
   const stageProgress = visibleStages.length
     ? Math.round((visibleStages.filter((stage) => stage.status === "approved").length / visibleStages.length) * 100)
@@ -569,7 +597,7 @@ export default function FlowDetailPage() {
   };
 
   const loadStageMessages = async (stageKey: StageKey, force = false) => {
-    if (!force && loadedStageKeysRef.current.has(stageKey)) return;
+    if (!force && loadedStageKeysRef.current.has(stageKey)) return null;
     setMessagesLoading(true);
     setError("");
     try {
@@ -582,8 +610,10 @@ export default function FlowDetailPage() {
       loadedStageKeysRef.current.add(stageKey);
       updateStageInFlow(data.stage);
       setMessagesByStage((current) => ({ ...current, [stageKey]: data.messages }));
+      return data;
     } catch (err: any) {
       setError(err.message || "获取阶段对话失败");
+      return null;
     } finally {
       setMessagesLoading(false);
     }
@@ -615,11 +645,35 @@ export default function FlowDetailPage() {
       [stageKey]: streamingState,
     }));
 
-    let latestStreamContent = "";
+    const appendContentChunk = async (chunk: string, resetPreview = false) => {
+      const parts = chunk.length > 96 ? splitStreamingChunk(chunk, 28) : [chunk];
+      for (let index = 0; index < parts.length; index += 1) {
+        const part = parts[index];
+        setStreamByStage((current) => {
+          const active = current[stageKey];
+          if (!active) return current;
+          const shouldReset = resetPreview && index === 0;
+          return {
+            ...current,
+            [stageKey]: {
+              ...active,
+              content: shouldReset ? part : active.content + part,
+              reasoning: "",
+            },
+          };
+        });
+        if (parts.length > 1 && index < parts.length - 1) {
+          await sleep(12);
+        }
+      }
+    };
+
+    let requestAcceptedAtLeastOnce = false;
     try {
       let lastError: unknown = null;
 
       for (let attempt = 0; attempt <= STREAM_RETRY_LIMIT; attempt += 1) {
+        let requestAccepted = false;
         try {
           let didRestartThisAttempt = attempt > 0;
           setStreamByStage((current) => ({
@@ -657,6 +711,8 @@ export default function FlowDetailPage() {
           if (!res.body) {
             throw new Error("当前响应不支持流式读取");
           }
+          requestAccepted = true;
+          requestAcceptedAtLeastOnce = true;
 
           const reader = res.body.getReader();
           const decoder = new TextDecoder();
@@ -677,6 +733,9 @@ export default function FlowDetailPage() {
               if (rawEvent.trim()) {
                 const parsed = parseSseChunk(rawEvent);
                 if (parsed.event === "content") {
+                  await appendContentChunk(parsed.data, didRestartThisAttempt);
+                  didRestartThisAttempt = false;
+                } else if (parsed.event === "reasoning") {
                   setStreamByStage((current) => {
                     const active = current[stageKey];
                     if (!active) return current;
@@ -684,13 +743,10 @@ export default function FlowDetailPage() {
                       ...current,
                       [stageKey]: {
                         ...active,
-                        content: didRestartThisAttempt ? parsed.data : active.content + parsed.data,
-                        reasoning: "",
+                        reasoning: mergeReasoningPreview(active.reasoning, parsed.data),
                       },
                     };
                   });
-                  latestStreamContent = didRestartThisAttempt ? parsed.data : latestStreamContent + parsed.data;
-                  didRestartThisAttempt = false;
                 } else if (parsed.event === "complete") {
                   sawComplete = true;
                   const payload = JSON.parse(parsed.data) as StageStreamCompletePayload;
@@ -717,6 +773,9 @@ export default function FlowDetailPage() {
           if (trailingEvent) {
             const parsed = parseSseChunk(trailingEvent);
             if (parsed.event === "content") {
+              await appendContentChunk(parsed.data, didRestartThisAttempt);
+              didRestartThisAttempt = false;
+            } else if (parsed.event === "reasoning") {
               setStreamByStage((current) => {
                 const active = current[stageKey];
                 if (!active) return current;
@@ -724,13 +783,10 @@ export default function FlowDetailPage() {
                   ...current,
                   [stageKey]: {
                     ...active,
-                    content: didRestartThisAttempt ? parsed.data : active.content + parsed.data,
-                    reasoning: "",
+                    reasoning: mergeReasoningPreview(active.reasoning, parsed.data),
                   },
                 };
               });
-              latestStreamContent = didRestartThisAttempt ? parsed.data : latestStreamContent + parsed.data;
-              didRestartThisAttempt = false;
             } else if (parsed.event === "complete") {
               sawComplete = true;
               const payload = JSON.parse(parsed.data) as StageStreamCompletePayload;
@@ -751,6 +807,20 @@ export default function FlowDetailPage() {
           return;
         } catch (err) {
           lastError = err;
+          if (userMessage && requestAccepted && attempt >= STREAM_RETRY_LIMIT) {
+            setStreamByStage((current) => ({ ...current, [stageKey]: null }));
+            try {
+              const refreshed = await loadStageMessages(stageKey, true);
+              const hasAssistantReply = Boolean(
+                refreshed?.messages?.some((message) => message.role === "assistant" && message.content.trim()),
+              );
+              if (hasAssistantReply) {
+                return;
+              }
+            } catch {
+              // Fall through to the existing local rollback path below.
+            }
+          }
           if (!isRetriableStreamError(err) || attempt >= STREAM_RETRY_LIMIT) {
             throw err;
           }
@@ -759,22 +829,12 @@ export default function FlowDetailPage() {
       }
       throw lastError instanceof Error ? lastError : new Error("发送消息失败");
     } catch (err) {
-      if (userMessage) {
+      if (userMessage && !requestAcceptedAtLeastOnce) {
         setMessagesByStage((current) => ({
           ...current,
           [stageKey]: (current[stageKey] || []).filter((message) => message.id !== userMessage.id),
         }));
         setDraftByStage((current) => ({ ...current, [stageKey]: draft || "" }));
-      }
-      const partialContent = latestStreamContent.trim();
-      if (partialContent) {
-        setMessagesByStage((current) => ({
-          ...current,
-          [stageKey]: appendStageMessage(
-            current[stageKey] || [],
-            buildPartialAssistantMessage(stage, streamingState, partialContent),
-          ),
-        }));
       }
       setStreamByStage((current) => ({ ...current, [stageKey]: null }));
       throw err;
@@ -804,6 +864,7 @@ export default function FlowDetailPage() {
       hasAssistant ||
       !isCurrentStage ||
       bootstrappingStageKeysRef.current.has(stageKey) ||
+      bootstrapFailedStageKeysRef.current.has(stageKey) ||
       activeBootstrapRequests.has(bootstrapRequestKey) ||
       liveStreamState
     ) {
@@ -823,9 +884,11 @@ export default function FlowDetailPage() {
     )
       .catch(async (err: any) => {
         if (err?.message === "当前阶段已经有生成内容") {
+          bootstrapFailedStageKeysRef.current.delete(stageKey);
           await loadStageMessages(stageKey, true);
           return;
         }
+        bootstrapFailedStageKeysRef.current.add(stageKey);
         setError(err.message || "阶段启动失败");
       })
       .finally(() => {
@@ -846,6 +909,15 @@ export default function FlowDetailPage() {
   ]);
 
   useEffect(() => {
+    if (!selectedStage) return;
+    const stageKey = selectedStage.stage_key;
+    const stageMessages = messagesByStage[stageKey] || [];
+    if (stageMessages.some((item) => item.role === "assistant" && item.content.trim())) {
+      bootstrapFailedStageKeysRef.current.delete(stageKey);
+    }
+  }, [messagesByStage, selectedStage]);
+
+  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [selectedStage?.stage_key, currentStageMessages.length, liveStreamState?.content, messagesLoading]);
 
@@ -856,10 +928,6 @@ export default function FlowDetailPage() {
       setError("请先完成前置阶段，再继续当前阶段");
       return;
     }
-    if (selectedStage.status === "approved") {
-      setError("当前阶段已确认，请先发起调整，再继续补充");
-      return;
-    }
     const draft = (draftByStage[selectedStage.stage_key] || "").trim();
     if (!draft) return;
 
@@ -867,6 +935,21 @@ export default function FlowDetailPage() {
     setError("");
     const stageKey = selectedStage.stage_key;
     try {
+      if (selectedStage.status === "approved") {
+        const revisionRes = await fetch(`/api/flows/${flowId}/stages/${stageKey}/request-revision`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ feedback: draft }),
+        });
+        if (!revisionRes.ok) {
+          const data = await revisionRes.json().catch(() => ({}));
+          throw new Error(data.detail || "发起调整失败");
+        }
+        const revisionFlow = (await revisionRes.json()) as Flow;
+        setFlow(revisionFlow);
+        setSelectedKey(stageKey);
+        loadedStageKeysRef.current.delete(stageKey);
+      }
       await consumeStageStream(
         stageKey,
         `/api/flows/${flowId}/stages/${stageKey}/messages/stream`,
@@ -884,34 +967,23 @@ export default function FlowDetailPage() {
   const approveStage = async () => {
     if (!selectedStage || approving) return;
     if (isBlockedByUpstream) {
-      setError("请先完成前置阶段，再确认当前阶段");
+      setError(isFinalStage ? "请先完成前置阶段，再完成当前流程" : "请先完成前置阶段，再进入下一阶段");
       return;
     }
-    if (!hasStageConclusion && !stageReadyToFinalize) {
-      setError(stageReadinessBlockers[0] || "当前阶段还没收完整，先把这轮关键点确认掉");
+    if (!hasStageConclusion) {
+      setError(stageReadinessBlockers[0] || "当前阶段结论还没生成出来，先继续补充当前内容");
       return;
     }
     setApproving(true);
     setError("");
     const stageKey = selectedStage.stage_key;
     try {
-      if (!hasStageConclusion) {
-        await consumeStageStream(
-          stageKey,
-          `/api/flows/${flowId}/stages/${stageKey}/finalize-stream`,
-          undefined,
-          "conclusion",
-          assistantSettings,
-        );
-        return;
-      }
-
       const res = await fetch(`/api/flows/${flowId}/stages/${stageKey}/approve`, {
         method: "POST",
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.detail || "确认当前阶段失败");
+        throw new Error(data.detail || (isFinalStage ? "完成当前流程失败" : "进入下一阶段失败"));
       }
       const data = (await res.json()) as Flow;
       setFlow(data);
@@ -920,47 +992,9 @@ export default function FlowDetailPage() {
         loadedStageKeysRef.current.delete(data.current_stage);
       }
     } catch (err: any) {
-      setError(err.message || (hasStageConclusion ? "确认当前阶段失败" : "生成阶段结论失败"));
+      setError(err.message || (isFinalStage ? "完成当前流程失败" : "进入下一阶段失败"));
     } finally {
       setApproving(false);
-    }
-  };
-
-  const requestRevision = async () => {
-    if (!selectedStage || revising) return;
-    if (isBlockedByUpstream) {
-      setError("当前阶段受前置阶段调整影响，请先回到前置阶段处理");
-      return;
-    }
-    const feedback = (draftByStage[selectedStage.stage_key] || "").trim();
-    if (!feedback) {
-      setError("请先写清要调整的内容，再发起调整");
-      return;
-    }
-
-    setRevising(true);
-    setError("");
-    const stageKey = selectedStage.stage_key;
-    try {
-      const res = await fetch(`/api/flows/${flowId}/stages/${stageKey}/request-revision`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ feedback }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.detail || "发起调整失败");
-      }
-      const data = (await res.json()) as Flow;
-      setFlow(data);
-      setSelectedKey(stageKey);
-      setDraftByStage((current) => ({ ...current, [stageKey]: "" }));
-      loadedStageKeysRef.current.delete(stageKey);
-      await loadStageMessages(stageKey, true);
-    } catch (err: any) {
-      setError(err.message || "发起调整失败");
-    } finally {
-      setRevising(false);
     }
   };
 
@@ -1024,36 +1058,21 @@ export default function FlowDetailPage() {
   const artifactGroups = visibleStages
     .map((stage) => ({
       stage,
-      artifacts: (stage.recommendation?.artifacts || []).filter(
-        (artifact) => artifact.url || artifact.artifact_id,
+      artifacts: dedupeStageArtifacts(
+        (stage.recommendation?.artifacts || []).filter(
+          (artifact) => (artifact.url || artifact.artifact_id) && artifactBelongsToStage(stage, artifact),
+        ),
       ),
     }))
-    .filter(
-      (group) =>
-        group.artifacts.length > 0 || group.stage.stage_key === selectedStage.stage_key,
-    )
-    .sort((a, b) => {
-      if (a.stage.stage_key === selectedStage.stage_key) return -1;
-      if (b.stage.stage_key === selectedStage.stage_key) return 1;
-      return a.stage.order - b.stage.order;
-    });
-  const currentStageArtifacts =
-    artifactGroups.find((group) => group.stage.stage_key === selectedStage.stage_key)?.artifacts ||
-    [];
-  const totalArtifacts = artifactGroups.reduce((sum, group) => sum + group.artifacts.length, 0);
-  const latestArtifactUpdatedAt = artifactGroups
-    .flatMap((group) => group.artifacts)
-    .map((artifact) => artifact.created_at)
-    .filter(Boolean)
-    .sort()
-    .at(-1);
+    .filter((group) => group.stage.status === "approved" && group.artifacts.length > 0)
+    .sort((a, b) => a.stage.order - b.stage.order);
 
   return (
     <div className="flex h-screen flex-col text-slate-950 dark:text-slate-50" style={{ backgroundColor: '#f9f9ff' }}>
       <TopNav />
       <main className="flex min-h-0 flex-1 flex-col pt-14">
         {/* Page header — floating, not a rigid bar */}
-        <div className="mx-auto w-full max-w-[1600px] px-3 py-4">
+        <div className="mx-auto w-full max-w-[1600px] px-4 py-6">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <Link
@@ -1062,24 +1081,21 @@ export default function FlowDetailPage() {
               >
                 <ArrowLeft size={16} />
               </Link>
-              <div>
+              <div className="min-w-0">
                 <h1 className="flex items-center gap-2 text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-100">
-                  {flow.name}
-                  <span className="inline-flex items-center rounded-full bg-indigo-50 dark:bg-indigo-500/10 px-2 py-0.5 text-[11px] font-medium text-indigo-600 dark:text-indigo-400">
+                  <span className="line-clamp-2 leading-snug break-words">{flow.name}</span>
+                  <span className="shrink-0 inline-flex items-center rounded-full bg-indigo-50 dark:bg-indigo-500/10 px-2 py-0.5 text-[11px] font-medium text-indigo-600 dark:text-indigo-400">
                     {currentMeta?.label}
                   </span>
                 </h1>
-                <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">{flow.target_platform} · {visibleStages.length} 个阶段</p>
               </div>
             </div>
-            <div className="flex items-center gap-2.5">
-              {/* Progress */}
-              <div className="hidden sm:flex items-center gap-2 rounded-full bg-white/60 dark:bg-slate-800/60 backdrop-blur-sm px-3 py-1.5 ring-1 ring-slate-200/60 dark:ring-slate-700/40">
-                <div className="h-1.5 w-20 overflow-hidden rounded-full bg-slate-200/80 dark:bg-slate-700/60">
-                  <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 transition-all" style={{ width: `${stageProgress}%` }} />
-                </div>
-                <span className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400">{stageProgress}%</span>
+            {/* Progress */}
+            <div className="hidden sm:flex w-[240px] shrink-0 items-center gap-2 rounded-lg bg-white/60 dark:bg-slate-800/60 backdrop-blur-sm px-3 py-1.5 ring-1 ring-slate-200/60 dark:ring-slate-700/40">
+              <div className="flex-1 h-1.5 overflow-hidden rounded-full bg-slate-200/80 dark:bg-slate-700/60">
+                <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 transition-all" style={{ width: `${stageProgress}%` }} />
               </div>
+              <span className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400">{stageProgress}%</span>
             </div>
           </div>
         </div>
@@ -1100,7 +1116,7 @@ export default function FlowDetailPage() {
                 <h2 className="text-[#333] dark:text-slate-200">流程阶段</h2>
               </div>
               {/* Stage list */}
-              <div className="overflow-y-auto px-2 pb-2">
+              <div className="flex flex-col gap-1 overflow-y-auto px-2 pb-2">
               {visibleStages.map((stage, index) => {
                 const meta = STAGE_META[stage.stage_key];
                 const active = stage.stage_key === selectedStage.stage_key;
@@ -1164,22 +1180,16 @@ export default function FlowDetailPage() {
               <div className="mt-4 rounded bg-slate-100 dark:bg-slate-800 px-2.5 py-1.5 text-[11px] leading-4 text-slate-500 dark:text-slate-400">
                 {isBlockedByUpstream
                   ? "当前阶段被前置阶段卡住，先完成上游调整。"
-                  : stageReadyToFinalize
-                    ? "这一阶段已经具备收口条件。"
+                  : hasStageConclusion
+                    ? isFinalStage
+                      ? "最终交付已经生成，可以直接完成当前流程或继续补充。"
+                      : "当前阶段结论已经生成，可以直接进入下一阶段或继续补充。"
+                    : stageReadyToFinalize
+                    ? isFinalStage
+                      ? "当前信息已足够生成最终交付文档。"
+                      : "当前信息已足够生成阶段文档。"
                     : "当前还在对话推进中，建议继续补充关键点。"}
               </div>
-              {!stageReadyToFinalize && stageReadinessBlockers.length > 0 ? (
-                <div className="mt-1.5 space-y-1">
-                  {stageReadinessBlockers.slice(0, 2).map((blocker, index) => (
-                    <div
-                      key={`${selectedStage.id}-blocker-${index}`}
-                      className="rounded-lg bg-amber-50/80 dark:bg-amber-500/10 px-2.5 py-1 text-[11px] leading-4 text-amber-600 dark:text-amber-200"
-                    >
-                      {blocker}
-                    </div>
-                  ))}
-                </div>
-              ) : null}
             </div>
           </aside>
 
@@ -1187,38 +1197,11 @@ export default function FlowDetailPage() {
           <section className="flex min-w-0 flex-1 flex-col rounded-lg bg-white dark:bg-slate-900 shadow-[0_1px_3px_rgba(0,0,0,0.06),0_1px_2px_rgba(0,0,0,0.04)] overflow-hidden">
             {/* Chat header */}
             <div className="px-4 py-3 border-b border-slate-200/50 dark:border-slate-700/30 bg-white/40 dark:bg-slate-800/30">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="flex size-6 items-center justify-center rounded-lg bg-indigo-50 dark:bg-indigo-500/10 text-xs font-bold text-indigo-600 dark:text-indigo-400">
-                    {String(currentStep).padStart(2, "0")}
-                  </span>
-                  <span className="text-sm font-semibold text-slate-800 dark:text-slate-200">{currentMeta.label}</span>
-                  <span className="text-xs text-slate-400 dark:text-slate-500">· {currentMeta.deliverable}</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <Badge variant={STATUS_BADGE_VARIANT[selectedStage.status]} className="px-2 py-0.5 text-[11px]">
-                    {STATUS_LABEL[selectedStage.status]}
-                  </Badge>
-                  <span className="inline-flex items-center rounded-lg bg-slate-100/80 dark:bg-slate-800/60 backdrop-blur-sm px-2 py-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-                    {flow.target_platform}
-                  </span>
-                  <span className="inline-flex items-center rounded-lg bg-slate-100/80 dark:bg-slate-800/60 backdrop-blur-sm px-2 py-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-                    对话 {currentStageMessages.length}
-                  </span>
-                </div>
+              <div className="flex items-center gap-2">
+                {currentMeta && <currentMeta.icon size={16} className="text-indigo-500 dark:text-indigo-400" />}
+                <span className="text-sm font-semibold text-slate-800 dark:text-slate-200">{currentMeta.label}</span>
+                <span className="text-xs text-slate-400 dark:text-slate-500">· {currentMeta.deliverable}</span>
               </div>
-              {focus.length > 0 && (
-                <div className="mt-1.5 flex flex-wrap gap-1">
-                  {focus.map((item, index) => (
-                    <span
-                      key={`${selectedStage.id}-${index}-${item}`}
-                      className="inline-flex items-center rounded-lg bg-indigo-50/80 dark:bg-indigo-500/10 px-2 py-0.5 text-[11px] text-indigo-600 dark:text-indigo-400"
-                    >
-                      {item}
-                    </span>
-                  ))}
-                </div>
-              )}
             </div>
 
             {/* Messages */}
@@ -1277,10 +1260,17 @@ export default function FlowDetailPage() {
                           </div>
                         )}
                         {isStreamingAssistant && (sending || approving) && (
-                          <div className="mt-2 flex items-center gap-1.5 text-[11px] opacity-60">
-                            <Loader2 size={11} className="animate-spin" />
-                            <span>正在思考</span>
-                            <ThinkingDots />
+                          <div className="mt-2 space-y-1.5 text-[11px] opacity-60">
+                            <div className="flex items-center gap-1.5">
+                              <Loader2 size={11} className="animate-spin" />
+                              <span>{liveStreamState?.reasoning ? "正在思考中" : "正在思考"}</span>
+                              <ThinkingDots />
+                            </div>
+                            {liveStreamState?.reasoning ? (
+                              <div className="rounded-lg bg-black/5 px-2 py-1 text-[11px] leading-5 text-slate-500 dark:bg-white/5 dark:text-slate-400">
+                                {liveStreamState.reasoning}
+                              </div>
+                            ) : null}
                           </div>
                         )}
                       </div>
@@ -1329,77 +1319,8 @@ export default function FlowDetailPage() {
 
             {/* Input area — Unified card */}
             <form onSubmit={submitMessage}>
-              <div className="m-4 rounded-xl bg-white/70 dark:bg-slate-900/70 backdrop-blur-md shadow-[0_1px_4px_rgba(0,0,0,0.06)] ring-1 ring-slate-200/70 dark:ring-slate-700/30 p-4">
-                {/* Settings row */}
-                <div className="mb-2 flex flex-wrap items-center gap-2">
-                  <Select
-                    value={assistantSettings.model}
-                    onValueChange={(value) =>
-                      setAssistantSettings((current) => ({ ...current, model: value || "" }))
-                    }
-                  >
-                    <SelectTrigger size="sm" className="h-7 w-[130px] text-xs border-slate-200/60 bg-white/80 dark:bg-slate-800/80 ring-1 ring-slate-200/60 dark:ring-slate-700/40 text-slate-600 dark:text-slate-300 focus-visible:ring-indigo-300">
-                      <SelectValue placeholder={modelsLoading ? "加载中..." : "选择模型"} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} />
-                    </SelectTrigger>
-                    <SelectContent className="min-w-[220px]">
-                      {models.map((item) => (
-                        <SelectItem key={item.model_id} value={item.model_id}>
-                          {item.provider_display} / {item.model_name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setAssistantSettings((current) => ({
-                        ...current,
-                        enable_web_search: !current.enable_web_search,
-                      }))
-                    }
-                    className={cn(
-                      "inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs transition-all",
-                      assistantSettings.enable_web_search
-                        ? "bg-indigo-50 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-400"
-                        : "text-slate-500 hover:bg-slate-100/80 dark:hover:bg-slate-800/60 dark:text-slate-400",
-                    )}
-                  >
-                    <Wifi size={12} />
-                    联网搜索
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setAssistantSettings((current) => ({
-                        ...current,
-                        enable_stage_skills: !current.enable_stage_skills,
-                      }))
-                    }
-                    className={cn(
-                      "inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs transition-all",
-                      assistantSettings.enable_stage_skills
-                        ? "bg-violet-50 text-violet-600 dark:bg-violet-500/10 dark:text-violet-400"
-                        : "text-slate-500 hover:bg-slate-100/80 dark:hover:bg-slate-800/60 dark:text-slate-400",
-                    )}
-                  >
-                    <Wrench size={12} />
-                    阶段增强
-                  </button>
-
-                  <span className="ml-auto text-xs text-slate-400 dark:text-slate-500">
-                    {isBlockedByUpstream
-                      ? "当前阶段被前置阶段锁定"
-                      : selectedStage.status === "approved"
-                      ? "当前阶段已确认"
-                      : stageReadyToFinalize
-                      ? "这一阶段已经具备收口条件"
-                      : "当前还在对话推进中"}
-                  </span>
-                </div>
-
-                {/* Textarea */}
+              <div className="m-4 rounded-xl bg-white dark:bg-slate-900 shadow-[0_2px_8px_rgba(0,0,0,0.08)] ring-1 ring-slate-200/70 dark:ring-slate-700/30 overflow-hidden">
+                {/* Textarea — main area */}
                 <textarea
                   value={draft}
                   onChange={(event) =>
@@ -1408,154 +1329,181 @@ export default function FlowDetailPage() {
                       [selectedStage.stage_key]: event.target.value,
                     }))
                   }
-                  rows={3}
-                  placeholder="继续补充、纠偏，或者直接告诉系统这一阶段已经可以收住..."
-                  className="w-full resize-none bg-transparent px-1 py-1 text-sm leading-relaxed text-slate-700 dark:text-slate-200 placeholder:text-slate-350/70 dark:placeholder:text-slate-500/70 outline-none"
+                  rows={4}
+                  placeholder="继续补充、纠偏，或者告诉系统当前理解已经差不多了..."
+                  className="w-full resize-none bg-transparent px-4 py-3.5 text-sm leading-relaxed text-slate-700 dark:text-slate-200 placeholder:text-slate-400 dark:placeholder:text-slate-500 outline-none min-h-[80px] max-h-[200px]"
                 />
 
-                {/* Action row */}
-                <div className="mt-2 flex justify-end gap-1.5">
-                  {selectedStage.status === "approved" && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      type="button"
-                      onClick={requestRevision}
-                      disabled={revising || sending || approving || isBlockedByUpstream || !draft.trim()}
-                      className="h-7 gap-1 text-xs"
+                {/* Bottom toolbar */}
+                <div className="flex items-center gap-2 border-t border-slate-100 dark:border-slate-700/50 px-3 py-2.5 bg-slate-50/50 dark:bg-slate-800/30">
+                  {/* Left side — tools */}
+                  <div className="flex items-center gap-1.5">
+                    <button type="button" className="inline-flex size-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700/60 dark:hover:text-slate-300 transition-colors">
+                      <Plus size={16} />
+                    </button>
+
+                    <Select
+                      value={assistantSettings.model}
+                      onValueChange={(value) =>
+                        setAssistantSettings((current) => ({ ...current, model: value || "" }))
+                      }
                     >
-                      {revising ? <Loader2 size={12} className="animate-spin" /> : <GitBranch size={12} />}
-                      发起调整
+                      <SelectTrigger size="sm" className="h-8 w-auto max-w-[160px] text-xs border-slate-200/60 bg-white dark:bg-slate-800 ring-1 ring-slate-200/60 dark:ring-slate-700/40 text-slate-600 dark:text-slate-300 focus-visible:ring-indigo-300 gap-1">
+                        <Sparkles size={12} className="shrink-0 text-slate-400" />
+                        <SelectValue placeholder={modelsLoading ? "加载中..." : "选择模型"} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} />
+                      </SelectTrigger>
+                      <SelectContent className="min-w-[220px]">
+                        {models.map((item) => (
+                          <SelectItem key={item.model_id} value={item.model_id}>
+                            {item.provider_display} / {item.model_name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setAssistantSettings((current) => ({
+                          ...current,
+                          enable_web_search: !current.enable_web_search,
+                        }))
+                      }
+                      className={cn(
+                        "inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors",
+                        assistantSettings.enable_web_search
+                          ? "bg-indigo-100 text-indigo-600 dark:bg-indigo-500/15 dark:text-indigo-400"
+                          : "text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700/60 dark:hover:text-slate-300",
+                      )}
+                      title="联网搜索"
+                    >
+                      <Wifi size={16} />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setAssistantSettings((current) => ({
+                          ...current,
+                          enable_stage_skills: !current.enable_stage_skills,
+                        }))
+                      }
+                      className={cn(
+                        "inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors",
+                        assistantSettings.enable_stage_skills
+                          ? "bg-violet-100 text-violet-600 dark:bg-violet-500/15 dark:text-violet-400"
+                          : "text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700/60 dark:hover:text-slate-300",
+                      )}
+                      title="阶段增强"
+                    >
+                      <Wrench size={16} />
+                    </button>
+                  </div>
+
+                  {/* Right side — actions */}
+                  <div className="ml-auto flex items-center gap-1.5">
+                      <Button
+                      type="submit"
+                      size="sm"
+                      disabled={sending || approving || isBlockedByUpstream || !draft.trim()}
+                      className="h-8 gap-1.5 rounded-lg bg-gradient-to-r from-indigo-500 to-violet-500 px-3 text-xs text-white shadow-sm shadow-indigo-500/25 hover:from-indigo-600 hover:to-violet-600 hover:shadow-md"
+                    >
+                      {sending ? <Loader2 size={13} className="animate-spin" /> : <ArrowUp size={13} />}
+                      发送
                     </Button>
-                  )}
-                  <Button
-                    type="submit"
-                    size="sm"
-                    disabled={sending || approving || revising || isBlockedByUpstream || selectedStage.status === "approved" || !draft.trim()}
-                    className="h-7 gap-1 bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-sm shadow-indigo-500/20 hover:from-indigo-700 hover:to-violet-700 px-3 text-xs"
-                  >
-                    {sending ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
-                    发送
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    type="button"
-                    onClick={approveStage}
-                    disabled={approving || sending || revising || isBlockedByUpstream || selectedStage.status === "approved"}
-                    className="h-7 gap-1 text-xs"
-                  >
-                    {approving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
-                    {hasStageConclusion ? "确认通过" : stageReadyToFinalize ? "生成结论" : "继续确认"}
-                  </Button>
+                    {!selectedStage.status?.includes("approved") && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        type="button"
+                        onClick={approveStage}
+                        disabled={approving || sending || isBlockedByUpstream || selectedStage.status === "approved" || !hasStageConclusion}
+                        className="h-8 gap-1.5 rounded-lg text-xs"
+                        title={
+                          hasStageConclusion
+                            ? isFinalStage
+                              ? "确认最终交付并完成当前流程"
+                              : "确认当前阶段并进入下一阶段"
+                            : isFinalStage
+                              ? "最终交付生成后才能完成当前流程"
+                              : "当前阶段结论生成后才能进入下一阶段"
+                        }
+                      >
+                        {approving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                        {isFinalStage ? "完成当前流程" : "进入下一阶段"}
+                      </Button>
+                    )}
+                  </div>
                 </div>
               </div>
               </form>
           </section>
 
           {/* Right column — artifacts */}
-          <aside className="w-[300px] shrink-0 self-start rounded-lg bg-white dark:bg-slate-900 shadow-[0_1px_3px_rgba(0,0,0,0.06),0_1px_2px_rgba(0,0,0,0.04)] bg-no-repeat min-h-[325px]" style={{ backgroundImage: "url('/model-bg.png')", backgroundPosition: 'center 0px', backgroundSize: 'contain' }}>
+          <aside className="w-[300px] shrink-0 self-start rounded-lg bg-white dark:bg-slate-900 shadow-[0_1px_3px_rgba(0,0,0,0.06),0_1px_2px_rgba(0,0,0,0.04)] bg-no-repeat flex flex-col" style={{ backgroundImage: "url('/model-bg.png')", backgroundPosition: 'center 0px', backgroundSize: 'contain', minHeight: '245px' }}>
             <div className="px-4 pt-5 pb-4 flex items-center justify-between">
               <h3 className="text-base font-semibold leading-none text-[#333] dark:text-slate-200">产物</h3>
-              <a
-                href={buildAllArtifactsDownloadUrl(flowId)}
-                download
-                className="inline-flex items-center gap-1 rounded px-2 py-1 text-[10px] leading-4 text-indigo-600 dark:text-indigo-400 hover:brightness-95 transition-colors"
-                style={{ backgroundColor: 'var(--color-indigo-100, #e0e7ff)' }}
-              >
-                <FileDown size={12} />
-                下载全部
-              </a>
+              {artifactGroups.length > 0 && (
+                <a
+                  href={buildAllArtifactsDownloadUrl(flowId)}
+                  download
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-50 px-2.5 py-1.5 text-[11px] font-medium text-indigo-600 transition-all hover:bg-indigo-100 hover:shadow-sm dark:bg-indigo-500/10 dark:text-indigo-400 dark:hover:bg-indigo-500/20"
+                >
+                  <FileDown size={13} />
+                  下载全部
+                </a>
+              )}
             </div>
-
-            {/* Current stage artifacts */}
-            <div className="border-b border-slate-200/50 dark:border-slate-700/30 px-4 py-3">
-              <div className="flex items-center justify-between mb-1.5">
-                <div className="flex items-center gap-1.5">
-                  <span className="flex size-7 items-center justify-center rounded-lg bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04)] text-indigo-600 dark:bg-slate-800 dark:text-indigo-400">
-                    <currentMeta.icon size={14} />
-                  </span>
-                  <span className="text-[13px] font-semibold text-[#333] dark:text-slate-200">{currentMeta.label}</span>
-                </div>
-              </div>
-              {currentStageArtifacts.length > 0 ? (
-                <div className="space-y-1">
-                  {currentStageArtifacts.map((artifact, index) => (
-                    <div key={`current-${index}`} className="flex items-center justify-between rounded-xl bg-white/80 dark:bg-slate-800/60 backdrop-blur-sm px-2.5 py-1.5 ring-1 ring-slate-200/60 dark:ring-slate-700/40">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <FileText size={12} className="shrink-0 text-slate-400" />
-                        <span className="truncate text-xs text-slate-700 dark:text-slate-300">{artifact.label || artifact.type || "附件"}</span>
-                      </div>
-                      {artifact.url ? (
-                        <a
-                          href={buildArtifactDownloadUrl(artifact.artifact_id, artifact.url)}
-                          download
-                          className="shrink-0 text-xs text-indigo-600 hover:text-indigo-500 dark:text-indigo-400"
+            <div className="flex-1 overflow-y-auto px-4 py-3">
+              {artifactGroups.length > 0 ? (
+                <div className="space-y-3">
+                  {artifactGroups.map((group) => (
+                    <div key={group.stage.id}>
+                      {/* Stage header — de-emphasized */}
+                      <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-slate-400 dark:text-slate-500">
+                        <span>{group.stage.title}</span>
+                        <span className="text-slate-300 dark:text-slate-600">·</span>
+                        <Badge
+                          variant={STATUS_BADGE_VARIANT[group.stage.status]}
+                          className="px-1 py-px text-[10px] leading-4 bg-transparent shadow-none"
                         >
-                          <FileDown size={12} />
-                        </a>
-                      ) : null}
+                          {STATUS_LABEL[group.stage.status]}
+                        </Badge>
+                      </div>
+
+                      {/* Artifact cards — download-focused */}
+                      <div className="space-y-1.5">
+                        {group.artifacts.map((artifact, index) => (
+                          <a
+                            key={`${group.stage.id}-${index}-${artifact.url || artifact.artifact_id || artifact.label}`}
+                            href={buildArtifactDownloadUrl(artifact.artifact_id, artifact.url)}
+                            download
+                            className="group flex items-center gap-2.5 rounded-lg border border-slate-200/70 dark:border-slate-700/40 bg-gradient-to-r from-white to-slate-50/50 dark:from-slate-800 dark:to-slate-800/50 px-3 py-2.5 transition-all hover:border-indigo-300 hover:shadow-sm hover:shadow-indigo-500/5 dark:hover:border-indigo-500/30 dark:hover:shadow-indigo-500/5"
+                          >
+                            <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-500 dark:bg-indigo-500/10 dark:text-indigo-400 transition-colors group-hover:bg-indigo-100 dark:group-hover:bg-indigo-500/20">
+                              <FileText size={14} />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-[13px] font-medium text-slate-700 dark:text-slate-200">{artifact.label || artifact.type || "附件"}</div>
+                              {artifact.created_at ? (
+                                <div className="text-[11px] text-slate-400 dark:text-slate-500">{formatDate(artifact.created_at)}</div>
+                              ) : null}
+                            </div>
+                            <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-indigo-50 text-indigo-500 dark:bg-indigo-500/15 dark:text-indigo-400 opacity-80 transition-all group-hover:bg-indigo-500 group-hover:text-white dark:group-hover:bg-indigo-500 group-hover:opacity-100">
+                              <FileDown size={13} />
+                            </div>
+                          </a>
+                        ))}
+                      </div>
                     </div>
                   ))}
                 </div>
               ) : (
-                <p className="text-xs text-slate-400 dark:text-slate-500">完成阶段结论后会出现在这里</p>
+                <div className="flex-1 flex flex-col items-center justify-center gap-3 text-slate-400 dark:text-slate-500 py-8">
+                  <img src="/artifacts-empty.svg" alt="暂无产物" width={120} height={120} className="opacity-70 dark:opacity-40" />
+                </div>
               )}
             </div>
-
-            {/* All artifacts */}
-            {artifactGroups.filter((g) => g.stage.stage_key !== selectedStage.stage_key).length > 0 && (
-            <div className="flex-1 overflow-y-auto px-4 py-3">
-                <div className="space-y-3">
-                  {artifactGroups
-                    .filter((group) => group.stage.stage_key !== selectedStage.stage_key)
-                    .map((group) => (
-                      <div key={group.stage.id}>
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-xs font-medium text-slate-600 dark:text-slate-300">{group.stage.title}</span>
-                          <Badge
-                            variant={STATUS_BADGE_VARIANT[group.stage.status]}
-                            className="px-1.5 py-px text-[10px] leading-4"
-                          >
-                            {STATUS_LABEL[group.stage.status]}
-                          </Badge>
-                        </div>
-                        {group.artifacts.length === 0 ? (
-                          <div className="text-xs text-slate-400 dark:text-slate-500 py-0.5">暂无产物</div>
-                        ) : (
-                          <div className="space-y-1">
-                            {group.artifacts.map((artifact, index) => (
-                              <div
-                                key={`${group.stage.id}-${index}-${artifact.url || artifact.artifact_id || artifact.label}`}
-                                className="flex items-center justify-between rounded-lg bg-slate-50 dark:bg-slate-800 px-2.5 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 transition-all"
-                              >
-                                <div className="flex items-center gap-1.5 min-w-0">
-                                  <FileText size={12} className="shrink-0 text-slate-400" />
-                                  <div className="min-w-0">
-                                    <div className="truncate text-xs text-slate-700 dark:text-slate-300">{artifact.label || artifact.type || "附件"}</div>
-                                    {artifact.created_at && (
-                                      <div className="text-[11px] text-slate-400">{formatDate(artifact.created_at)}</div>
-                                    )}
-                                  </div>
-                                </div>
-                                {artifact.url ? (
-                                  <a
-                                    href={buildArtifactDownloadUrl(artifact.artifact_id, artifact.url)}
-                                    download
-                                    className="shrink-0 text-xs text-slate-400 hover:text-indigo-600 dark:text-slate-500 dark:hover:text-indigo-400 transition-colors"
-                                  >
-                                    <FileDown size={12} />
-                                  </a>
-                                ) : null}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                </div>
-            </div>
-            )}
           </aside>
         </div>
       </main>

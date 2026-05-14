@@ -608,7 +608,6 @@ export default function RoundtablePage() {
                 </div>
               </article>
             </div>
-            </div>
           )}
 
           {/* Typing indicator */}

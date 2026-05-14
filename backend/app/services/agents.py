@@ -626,16 +626,16 @@ class LeaderAgent(BaseAgent):
 边界约束：
 - 不要输出代码执行命令
 - 不要把任务写成自动改仓库流程
-- 要聚焦交接、范围、依赖、验收口径和待确认项
+- 要聚焦交接、范围、依赖、完成判断和待确认项
 
 请直接输出 JSON 数组，不要包含其他内容。格式示例：
 [
   {
-    "title": "整理实现准备说明",
-    "description": "汇总模块边界、依赖和验收标准...",
+    "title": "整理交付准备说明",
+    "description": "汇总模块边界、依赖和完成判断...",
     "assigned_agent": "spec_writer",
     "dependencies": [],
-    "target_paths": ["模块说明", "接口约束", "验收标准"],
+    "target_paths": ["模块说明", "接口约束", "完成判断"],
     "validation_commands": ["确认是否还有未明确依赖"]
   }
 ]"""

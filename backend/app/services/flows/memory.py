@@ -14,6 +14,10 @@ from app.models.models import User, Workspace, WorkspaceMemory, WorkspaceStage, 
 logger = logging.getLogger(__name__)
 
 ACTIVE_MEMORY_STATUSES = {"candidate", "confirmed"}
+MEMORY_STATUS_PRIORITY = {
+    "candidate": 1,
+    "confirmed": 2,
+}
 MEMORY_TYPES = {
     "product_definition",
     "target_user",
@@ -29,6 +33,7 @@ MEMORY_TYPES = {
     "delivery_item",
 }
 MEMORY_SCOPES = {"global", "stage"}
+MEMORY_RETRIEVAL_LIMIT = 12
 
 
 def _normalize_text(value: str) -> str:
@@ -77,6 +82,124 @@ def _memory_tags(memory: WorkspaceMemory) -> List[str]:
     return []
 
 
+def _extract_retrieval_terms(value: str) -> List[str]:
+    text = _normalize_text(value).lower()
+    if not text:
+        return []
+
+    terms: List[str] = []
+    seen: set[str] = set()
+
+    for word in re.findall(r"[a-z0-9_-]{2,}", text):
+        if word not in seen:
+            seen.add(word)
+            terms.append(word)
+
+    compact = re.sub(r"\s+", "", text)
+    for segment in re.findall(r"[\u4e00-\u9fff]{2,}", compact):
+        if segment not in seen:
+            seen.add(segment)
+            terms.append(segment)
+        if len(segment) > 8:
+            for size in (2, 3, 4):
+                for index in range(0, len(segment) - size + 1):
+                    token = segment[index:index + size]
+                    if token not in seen:
+                        seen.add(token)
+                        terms.append(token)
+
+    return terms[:48]
+
+
+def _memory_stage_order_map(stages: Optional[Sequence[WorkspaceStage]]) -> Dict[str, int]:
+    if not stages:
+        return {}
+    return {item.stage_key.value: item.order for item in stages}
+
+
+def _memory_relevance_score(
+    memory: WorkspaceMemory,
+    *,
+    current_input: str,
+    current_stage_key: Optional[str],
+    stage_order_map: Dict[str, int],
+    current_stage_order: Optional[int],
+) -> int:
+    haystack_parts = [
+        _normalize_text(memory.topic).lower(),
+        _normalize_text(memory.content).lower(),
+        " ".join(_memory_tags(memory)).lower(),
+    ]
+    haystack = "\n".join(part for part in haystack_parts if part)
+    if not haystack:
+        return 0
+
+    score = 0
+    for term in _extract_retrieval_terms(current_input):
+        if term in haystack:
+            score += 3 if term == _normalize_text(memory.topic).lower() else 1
+
+    if current_input:
+        normalized_input = _normalize_text(current_input).lower()
+        if normalized_input and normalized_input in haystack:
+            score += 5
+
+    if current_stage_key and memory.stage_key == current_stage_key:
+        score += 3
+    if memory.scope == "global":
+        score += 2
+    if memory.status == "confirmed":
+        score += 2
+    elif memory.status == "candidate" and current_stage_key and memory.stage_key == current_stage_key:
+        score += 1
+
+    memory_order = stage_order_map.get(memory.stage_key)
+    if current_stage_order is not None and memory_order is not None:
+        score += max(0, 3 - abs(current_stage_order - memory_order))
+
+    return score
+
+
+def _select_relevant_memories(
+    memories: Sequence[WorkspaceMemory],
+    *,
+    current_input: str = "",
+    current_stage_key: Optional[str] = None,
+    current_stage_order: Optional[int] = None,
+    stages: Optional[Sequence[WorkspaceStage]] = None,
+    limit: int = MEMORY_RETRIEVAL_LIMIT,
+) -> List[WorkspaceMemory]:
+    if not memories:
+        return []
+
+    stage_order_map = _memory_stage_order_map(stages)
+    ranked = []
+    for memory in memories:
+        score = _memory_relevance_score(
+            memory,
+            current_input=current_input,
+            current_stage_key=current_stage_key,
+            stage_order_map=stage_order_map,
+            current_stage_order=current_stage_order,
+        )
+        ranked.append((score, memory.updated_at, memory.created_at, memory))
+
+    if current_input.strip():
+        ranked.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+        relevant = [item[3] for item in ranked if item[0] > 0][:limit]
+        if relevant:
+            return list(reversed(relevant)) if len(relevant) <= 3 else relevant
+
+    fallback: List[WorkspaceMemory] = []
+    seen_ids: set[str] = set()
+    for memory in [*memories[-6:]]:
+        if memory.id in seen_ids:
+            continue
+        seen_ids.add(memory.id)
+        fallback.append(memory)
+    return fallback[-limit:]
+
+
 def build_memory_extraction_prompt(
     workspace: Workspace,
     stage: WorkspaceStage,
@@ -85,9 +208,12 @@ def build_memory_extraction_prompt(
     source_text: str,
     existing_memories: Sequence[WorkspaceMemory],
 ) -> str:
+    preferred_status = "candidate" if source_kind == "user_message" else "confirmed"
     memory_lines = []
     for item in existing_memories[-24:]:
-        memory_lines.append(f"- [{item.memory_type}] {item.topic or '未命名'}：{item.content}")
+        memory_lines.append(
+            f"- [{item.status}] [{item.memory_type}] {item.topic or '未命名'}：{item.content}"
+        )
     existing_block = "\n".join(memory_lines) if memory_lines else "- 暂无"
     return f"""
 你要从一段产品协作内容里，提取可以长期复用的结构化事实记忆。
@@ -101,12 +227,15 @@ def build_memory_extraction_prompt(
 2. 不能把整段内容改写成摘要；要拆成一条条独立事实。
 3. 只保留来源文本里明确表达的事实，不要脑补，不要补推断。
 4. 同一个事实如果只是换说法，不要重复提取。
-5. topic 要短，像稳定的记忆键，例如“产品形态”“服务范围”“预约模式”“洗车容量”。
+5. topic 要短，像稳定的记忆键，例如“产品形态”“访问方式”“内容边界”“确认机制”。
 6. memory_type 只能从下面这些值里选：
    product_definition, target_user, core_goal, constraint, process_rule, business_rule, capacity_rule, permission_rule, module_definition, page_structure, technical_decision, delivery_item
 7. scope 只能是 global 或 stage。
-8. status 只能是 confirmed。
-9. tags 是可选短标签数组，没有就留空数组。
+8. status 只能是 candidate 或 confirmed。
+9. 本次来源类型是 {source_kind}，默认应该写成 {preferred_status}。
+10. 如果这条事实只是用户当前对话里明确说过、但整个阶段还没正式确认，优先写 candidate。
+11. 只有来源已经是阶段确认后的正式文档，或者这是一个已经被正式锁定的阶段结论，才写 confirmed。
+12. tags 是可选短标签数组，没有就留空数组。
 
 已有活跃记忆（避免重复）：
 {existing_block}
@@ -119,11 +248,11 @@ def build_memory_extraction_prompt(
   "memories": [
     {{
       "memory_type": "constraint",
-      "topic": "服务范围",
-      "content": "仅支持杭州单店到店预约，不提供上门服务。",
+      "topic": "访问范围",
+      "content": "产品面向公开访客开放浏览，不要求先登录才能阅读。",
       "scope": "global",
-      "status": "confirmed",
-      "tags": ["预约", "门店"]
+      "status": "{preferred_status}",
+      "tags": ["公开", "访问"]
     }}
   ]
 }}
@@ -151,22 +280,32 @@ def format_memory_context(memories: Sequence[WorkspaceMemory]) -> str:
     if not memories:
         return "- 暂无已确认记忆。"
 
-    global_lines: List[str] = []
-    stage_lines: List[str] = []
+    global_confirmed_lines: List[str] = []
+    stage_confirmed_lines: List[str] = []
+    candidate_lines: List[str] = []
     for item in memories:
         line = f"- [{item.memory_type}] {item.topic or '未命名'}：{item.content}"
-        if item.scope == "global":
-            global_lines.append(line)
+        if item.status == "candidate":
+            candidate_lines.append(f"- [{item.stage_key}] [{item.memory_type}] {item.topic or '未命名'}：{item.content}")
+        elif item.scope == "global":
+            global_confirmed_lines.append(line)
         else:
-            stage_lines.append(f"- [{item.stage_key}] [{item.memory_type}] {item.topic or '未命名'}：{item.content}")
+            stage_confirmed_lines.append(f"- [{item.stage_key}] [{item.memory_type}] {item.topic or '未命名'}：{item.content}")
 
     blocks: List[str] = []
-    if global_lines:
-        blocks.extend(["全局已确认事实：", *global_lines])
-    if stage_lines:
+    if global_confirmed_lines:
+        blocks.extend(["全局已确认事实：", *global_confirmed_lines])
+    if stage_confirmed_lines:
         if blocks:
             blocks.append("")
-        blocks.extend(["阶段已确认事实：", *stage_lines])
+        blocks.extend(["阶段已确认事实：", *stage_confirmed_lines])
+    if candidate_lines:
+        if blocks:
+            blocks.append("")
+        blocks.extend([
+            "当前对话暂存事实（用户已明确说过，但当前阶段还未正式确认）：",
+            *candidate_lines,
+        ])
     return "\n".join(blocks)
 
 
@@ -176,15 +315,26 @@ async def build_workspace_memory_context(
     *,
     stage_order: Optional[int] = None,
     stages: Optional[Sequence[WorkspaceStage]] = None,
+    current_input: str = "",
+    current_stage_key: Optional[str] = None,
+    limit: int = MEMORY_RETRIEVAL_LIMIT,
 ) -> str:
-    memories = await list_workspace_memories(db, workspace_id, statuses={"confirmed"})
+    memories = await list_workspace_memories(db, workspace_id, statuses=ACTIVE_MEMORY_STATUSES)
     if stage_order is not None and stages is not None:
         order_by_key = {item.stage_key.value: item.order for item in stages}
         memories = [
             item for item in memories
             if order_by_key.get(item.stage_key, -1) <= stage_order
         ]
-    return format_memory_context(memories)
+    selected = _select_relevant_memories(
+        memories,
+        current_input=current_input,
+        current_stage_key=current_stage_key,
+        current_stage_order=stage_order,
+        stages=stages,
+        limit=limit,
+    )
+    return format_memory_context(selected)
 
 
 async def _extract_memories_with_llm(
@@ -282,12 +432,16 @@ async def _upsert_memory_item(
     existing = list(result.scalars().all())
     for item_existing in existing:
         if _normalize_key(item_existing.content) == _normalize_key(content):
+            if MEMORY_STATUS_PRIORITY.get(status, 0) > MEMORY_STATUS_PRIORITY.get(item_existing.status, 0):
+                item_existing.status = status
             if source_message_id and not item_existing.source_message_id:
                 item_existing.source_message_id = source_message_id
             if source_artifact_id and not item_existing.source_artifact_id:
                 item_existing.source_artifact_id = source_artifact_id
             if tags and not item_existing.tags_json:
                 item_existing.tags_json = _memory_tags_json(tags)
+            if scope == "global" and item_existing.scope != "global":
+                item_existing.scope = "global"
             return item_existing
 
     superseded_id = existing[0].id if existing else None
@@ -356,13 +510,15 @@ async def sync_memories_from_source(
     for item in extracted:
         if not isinstance(item, dict):
             continue
+        normalized_item = dict(item)
+        normalized_item["status"] = "candidate" if source_kind == "user_message" else "confirmed"
         memory = await _upsert_memory_item(
             db=db,
             workspace=workspace,
             stage=stage,
             source_message_id=source_message_id,
             source_artifact_id=source_artifact_id,
-            item=item,
+            item=normalized_item,
         )
         if memory is not None:
             created.append(memory)

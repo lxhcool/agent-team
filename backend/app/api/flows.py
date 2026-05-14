@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.authz import get_user_from_query_token
 from app.api.flow_schemas import (
     CreateWorkspaceRequest,
-    GenerateStageRequest,
     SendWorkspaceStageMessageRequest,
     StageFeedbackRequest,
     StageRunSettingsRequest,
@@ -29,8 +28,6 @@ from app.api.workspaces import (
     create_workspace as create_workspace_impl,
     delete_workspace as delete_workspace_impl,
     finalize_workspace_stage_stream as finalize_workspace_stage_stream_impl,
-    generate_workspace_stage as generate_workspace_stage_impl,
-    generate_workspace_stage_stream as generate_workspace_stage_stream_impl,
     get_workspace as get_workspace_impl,
     get_workspace_stage_messages as get_workspace_stage_messages_impl,
     list_workspace_stages as list_workspace_stages_impl,
@@ -208,40 +205,6 @@ async def update_flow_stage(
     user: User = Depends(get_current_user),
 ):
     return await update_workspace_stage_impl(
-        workspace_id=workspace_id,
-        stage_key=stage_key,
-        req=req,
-        db=db,
-        user=user,
-    )
-
-
-@router.post("/flows/{workspace_id}/stages/{stage_key}/generate", response_model=WorkspaceStageResponse)
-async def generate_flow_stage(
-    workspace_id: str,
-    stage_key: WorkspaceStageKey,
-    req: GenerateStageRequest,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    return await generate_workspace_stage_impl(
-        workspace_id=workspace_id,
-        stage_key=stage_key,
-        req=req,
-        db=db,
-        user=user,
-    )
-
-
-@router.post("/flows/{workspace_id}/stages/{stage_key}/generate-stream")
-async def generate_flow_stage_stream(
-    workspace_id: str,
-    stage_key: WorkspaceStageKey,
-    req: GenerateStageRequest,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    return await generate_workspace_stage_stream_impl(
         workspace_id=workspace_id,
         stage_key=stage_key,
         req=req,

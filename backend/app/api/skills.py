@@ -297,7 +297,7 @@ BUILTIN_SKILLS = [
         "output_format": "markdown",
         "content": """你现在服务的是多阶段产品流程里的「方案设计」阶段。
 
-你的职责不是做产品顾问式发散，也不是给用户出选择题，而是把这一阶段真正该确认的方案骨架收清楚。
+你的职责不是做产品顾问式发散，也不是给用户出选择题，而是把这一阶段真正该确认的方案骨架讲清楚。
 
 必须遵守：
 1. 先功能模块，再模块关系，再页面结构，再主要流程。
@@ -494,7 +494,7 @@ BUILTIN_SKILLS = [
     {
         "name": "implementation-handoff",
         "display_name": "实现交接整理",
-        "description": "整理实现准备文档、模块拆分、依赖项和验收口径，形成后续人工执行输入。",
+        "description": "整理交付准备文档、模块拆分、依赖项和完成判断，形成后续人工执行输入。",
         "version": "2.0.0",
         "source_type": "builtin",
         "author": "team-agent",
