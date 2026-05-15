@@ -48,8 +48,8 @@ export default function LoginPage() {
           <div className="mx-auto mb-4 flex size-14 items-center justify-center rounded-2xl bg-[#6366f1] shadow-lg shadow-indigo-200">
             <Bot size={28} className="text-white" strokeWidth={2.5} />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-[#1a1a2e]">Agent Team</h1>
-          <p className="mt-1 text-sm text-[#6b7280]">多 Agent 协作系统</p>
+          <h1 className="text-2xl font-bold tracking-tight text-[#1a1a2e]">FlowPilot</h1>
+          <p className="mt-1 text-sm text-[#6b7280]">AI 交付流程工作台</p>
         </div>
 
         {/* Card */}
@@ -177,7 +177,7 @@ export default function LoginPage() {
         </div>
 
         <p className="mt-6 text-center text-xs text-[#9ca3af]">
-          Agent Team &copy; {new Date().getFullYear()}
+          FlowPilot &copy; {new Date().getFullYear()}
         </p>
       </div>
     </div>

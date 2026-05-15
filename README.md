@@ -1,10 +1,10 @@
-# Team Agent
+# FlowPilot
 
 面向小团队的 AI 交付经理工作台。
 
 ## 定位
 
-Team Agent 不负责写代码，也不负责本地执行开发任务。
+FlowPilot 不负责写代码，也不负责本地执行开发任务。
 
 它负责把：
 

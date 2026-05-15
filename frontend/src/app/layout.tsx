@@ -8,7 +8,7 @@ import { AppInit } from "./components/init";
 const geist = Geist({subsets:['latin'],variable:'--font-sans'});
 
 export const metadata: Metadata = {
-  title: "Team Agent - AI 交付经理工作台",
+  title: "FlowPilot - AI 交付流程工作台",
   description: "面向小团队的 AI 交付经理工作台",
   icons: {
     icon: "/logo.png",

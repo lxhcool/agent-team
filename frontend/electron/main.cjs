@@ -17,7 +17,7 @@ const childProcesses = new Set();
 let mainWindow = null;
 
 if (!isPackaged) {
-  app.setPath("userData", path.join(app.getPath("appData"), "Team Agent Dev"));
+  app.setPath("userData", path.join(app.getPath("appData"), "FlowPilot Dev"));
 }
 
 function log(message) {
@@ -92,7 +92,7 @@ function createWindow() {
     height: 840,
     minWidth: 1080,
     minHeight: 720,
-    title: "Team Agent",
+    title: "FlowPilot",
     backgroundColor: "#0f172a",
     show: true,
     icon: appIconPath,
@@ -151,7 +151,7 @@ function createWindow() {
             </style>
           </head>
           <body>
-            <div class="box"><span class="dot"></span><span>Starting Team Agent...</span></div>
+            <div class="box"><span class="dot"></span><span>Starting FlowPilot...</span></div>
           </body>
         </html>
       `)
@@ -496,7 +496,7 @@ async function bootstrap() {
   } catch (error) {
     log(`startup failed: ${error instanceof Error ? error.stack || error.message : String(error)}`);
     dialog.showErrorBox(
-      "Team Agent failed to start",
+      "FlowPilot failed to start",
       error instanceof Error ? error.message : String(error)
     );
     app.quit();

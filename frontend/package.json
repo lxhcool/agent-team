@@ -39,7 +39,7 @@
   },
   "build": {
     "appId": "com.teamagent.desktop",
-    "productName": "Team Agent",
+    "productName": "FlowPilot",
     "icon": "electron/assets/icon.png",
     "directories": {
       "output": "dist-desktop"

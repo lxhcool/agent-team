@@ -80,7 +80,7 @@ export function TopNav() {
         {/* Logo */}
         <Link href="/" className="flex items-center gap-2.5 shrink-0">
           <img src="/logo.png" alt="" className="size-7 rounded-lg object-cover" />
-          <span className="hidden sm:inline text-sm font-bold text-slate-800 dark:text-slate-100">Agent Team</span>
+          <span className="hidden sm:inline text-sm font-bold text-slate-800 dark:text-slate-100">FlowPilot</span>
         </Link>
 
         {/* Main Nav */}
