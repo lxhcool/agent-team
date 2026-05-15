@@ -10,7 +10,6 @@ import rehypeHighlight from "rehype-highlight";
 import {
   ArrowLeft,
   ArrowUp,
-  Brain,
   Check,
   CheckCircle2,
   ClipboardList,
@@ -122,6 +121,42 @@ type StageChatPayload = {
   messages: StageMessage[];
 };
 
+type ExpertFinding = {
+  agent_id: string;
+  agent_name: string;
+  expertise: string;
+  conclusion: string;
+  issues: string[];
+  suggestions: string[];
+  blocking: boolean;
+  user_confirmations: string[];
+  confidence: string;
+};
+
+type StageReview = {
+  id: string;
+  workspace_id: string;
+  stage_id: string;
+  stage_key: StageKey;
+  status: string;
+  review_type: string;
+  draft_message_id: string | null;
+  participants: Array<Record<string, unknown>>;
+  expert_findings: ExpertFinding[];
+  summary: string | null;
+  result: {
+    overall_judgment?: string;
+    why?: string;
+    main_risks?: string[];
+    expert_conflicts?: string[];
+    suggested_supplements?: string[];
+    focus_for_user?: string[];
+    can_enter_next_stage?: boolean;
+    user_confirmation_questions?: string[];
+  };
+  created_at: string | null;
+};
+
 type StageStreamState = {
   messageId: string;
   content: string;
@@ -136,6 +171,10 @@ type StageStreamCompletePayload = {
   model?: string | null;
   provider?: string | null;
 };
+
+type ChatTimelineItem =
+  | { type: "message"; id: string; timestamp: number; order: number; message: StageMessage }
+  | { type: "review"; id: string; timestamp: number; order: number; review: StageReview };
 
 type AssistantRuntimeSettings = {
   model: string;
@@ -162,6 +201,72 @@ const MAIN_STAGE_ORDER: StageKey[] = [
   "deployment",
 ];
 
+const EXPERT_REVIEW_STAGE_KEYS = new Set<StageKey>(["product", "ui_direction", "technical"]);
+
+const EXPERT_AVATAR_META: Record<string, { label: string; className: string; bubbleClassName: string; textClassName: string }> = {
+  "product-structure-reviewer": {
+    label: "产",
+    className: "bg-indigo-100 text-indigo-600 ring-indigo-200/70 dark:bg-indigo-500/15 dark:text-indigo-300 dark:ring-indigo-500/20",
+    bubbleClassName: "bg-indigo-50/70 ring-indigo-200/60 text-slate-800 dark:bg-indigo-500/10 dark:ring-indigo-500/20 dark:text-indigo-50",
+    textClassName: "text-indigo-600 dark:text-indigo-300",
+  },
+  "ux-clarity-reviewer": {
+    label: "验",
+    className: "bg-emerald-100 text-emerald-600 ring-emerald-200/70 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-500/20",
+    bubbleClassName: "bg-emerald-50/70 ring-emerald-200/60 text-slate-800 dark:bg-emerald-500/10 dark:ring-emerald-500/20 dark:text-emerald-50",
+    textClassName: "text-emerald-600 dark:text-emerald-300",
+  },
+  "technical-feasibility-reviewer": {
+    label: "技",
+    className: "bg-amber-100 text-amber-700 ring-amber-200/70 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-500/20",
+    bubbleClassName: "bg-amber-50/80 ring-amber-200/70 text-slate-800 dark:bg-amber-500/10 dark:ring-amber-500/20 dark:text-amber-50",
+    textClassName: "text-amber-700 dark:text-amber-300",
+  },
+  "business-rule-reviewer": {
+    label: "规",
+    className: "bg-indigo-100 text-indigo-600 ring-indigo-200/70 dark:bg-indigo-500/15 dark:text-indigo-300 dark:ring-indigo-500/20",
+    bubbleClassName: "bg-indigo-50/70 ring-indigo-200/60 text-slate-800 dark:bg-indigo-500/10 dark:ring-indigo-500/20 dark:text-indigo-50",
+    textClassName: "text-indigo-600 dark:text-indigo-300",
+  },
+  "interaction-state-reviewer": {
+    label: "态",
+    className: "bg-emerald-100 text-emerald-600 ring-emerald-200/70 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-500/20",
+    bubbleClassName: "bg-emerald-50/70 ring-emerald-200/60 text-slate-800 dark:bg-emerald-500/10 dark:ring-emerald-500/20 dark:text-emerald-50",
+    textClassName: "text-emerald-600 dark:text-emerald-300",
+  },
+  "edge-case-reviewer": {
+    label: "界",
+    className: "bg-amber-100 text-amber-700 ring-amber-200/70 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-500/20",
+    bubbleClassName: "bg-amber-50/80 ring-amber-200/70 text-slate-800 dark:bg-amber-500/10 dark:ring-amber-500/20 dark:text-amber-50",
+    textClassName: "text-amber-700 dark:text-amber-300",
+  },
+  "architecture-reviewer": {
+    label: "架",
+    className: "bg-indigo-100 text-indigo-600 ring-indigo-200/70 dark:bg-indigo-500/15 dark:text-indigo-300 dark:ring-indigo-500/20",
+    bubbleClassName: "bg-indigo-50/70 ring-indigo-200/60 text-slate-800 dark:bg-indigo-500/10 dark:ring-indigo-500/20 dark:text-indigo-50",
+    textClassName: "text-indigo-600 dark:text-indigo-300",
+  },
+  "data-api-reviewer": {
+    label: "数",
+    className: "bg-emerald-100 text-emerald-600 ring-emerald-200/70 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-500/20",
+    bubbleClassName: "bg-emerald-50/70 ring-emerald-200/60 text-slate-800 dark:bg-emerald-500/10 dark:ring-emerald-500/20 dark:text-emerald-50",
+    textClassName: "text-emerald-600 dark:text-emerald-300",
+  },
+  "engineering-risk-reviewer": {
+    label: "险",
+    className: "bg-amber-100 text-amber-700 ring-amber-200/70 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-500/20",
+    bubbleClassName: "bg-amber-50/80 ring-amber-200/70 text-slate-800 dark:bg-amber-500/10 dark:ring-amber-500/20 dark:text-amber-50",
+    textClassName: "text-amber-700 dark:text-amber-300",
+  },
+};
+
+const DEFAULT_EXPERT_AVATAR_META = {
+  label: "专",
+  className: "bg-violet-100 text-violet-600 ring-violet-200/70 dark:bg-violet-500/15 dark:text-violet-300 dark:ring-violet-500/20",
+  bubbleClassName: "bg-violet-50/70 ring-violet-200/60 text-slate-800 dark:bg-violet-500/10 dark:ring-violet-500/20 dark:text-violet-50",
+  textClassName: "text-violet-600 dark:text-violet-300",
+};
+
 const STAGE_META: Record<
   StageKey,
   {
@@ -175,7 +280,7 @@ const STAGE_META: Record<
   requirements: {
     label: "需求确认",
     short: "01",
-    description: "只确认这是什么产品：基本使用或呈现方式怎么成立、哪些前提会影响后续骨架。",
+    description: "只确认这是什么产品、最基本怎么成立，以及会改变产品形态的关键前提；不提前设计功能、页面或实现方案。",
     deliverable: "需求确认文档",
     icon: PackageCheck,
   },
@@ -253,7 +358,22 @@ function formatDate(value: string | null) {
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(new Date(value));
+  }).format(new Date(normalizeApiTimestamp(value)));
+}
+
+function normalizeApiTimestamp(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return trimmed;
+  if (/[zZ]$/.test(trimmed) || /[+-]\d{2}:?\d{2}$/.test(trimmed)) {
+    return trimmed;
+  }
+  return `${trimmed}Z`;
+}
+
+function timestampValue(value: string | null | undefined, fallback: number) {
+  if (!value) return fallback;
+  const raw = new Date(normalizeApiTimestamp(value)).getTime();
+  return Number.isFinite(raw) ? raw : fallback;
 }
 
 function withAuthToken(url: string | null) {
@@ -282,8 +402,7 @@ function artifactBelongsToStage(stage: FlowStage, artifact: RecommendationArtifa
 }
 
 function artifactTimestampValue(artifact: RecommendationArtifact) {
-  const raw = artifact.created_at ? new Date(artifact.created_at).getTime() : 0;
-  return Number.isFinite(raw) ? raw : 0;
+  return timestampValue(artifact.created_at, 0);
 }
 
 function dedupeStageArtifacts(artifacts: RecommendationArtifact[]) {
@@ -353,7 +472,63 @@ function appendStageMessage(messages: StageMessage[], message: StageMessage) {
   if (messages.some((item) => item.id === message.id)) {
     return messages;
   }
-  return [...messages, message];
+  return sortStageMessages([...messages, message]);
+}
+
+function messageTimestampValue(message: StageMessage) {
+  return timestampValue(message.created_at, Number.MAX_SAFE_INTEGER);
+}
+
+function sortStageMessages(messages: StageMessage[]) {
+  return messages
+    .map((message, index) => ({ message, index }))
+    .sort((left, right) => {
+      const delta = messageTimestampValue(left.message) - messageTimestampValue(right.message);
+      return delta || left.index - right.index;
+    })
+    .map((item) => item.message);
+}
+
+function shouldDisplayStageMessage(message: StageMessage) {
+  if (message.role !== "user") return true;
+  return !message.content.trim().startsWith("请基于刚生成的专业视角检查，修订当前");
+}
+
+function getExpertAvatarMeta(agentId: string) {
+  return EXPERT_AVATAR_META[agentId] || DEFAULT_EXPERT_AVATAR_META;
+}
+
+function firstNonEmptyReviewItems(...groups: Array<string[] | undefined>) {
+  for (const group of groups) {
+    const items = (group || []).filter((item) => item.trim());
+    if (items.length) return items;
+  }
+  return [];
+}
+
+function expertConclusionText(finding: ExpertFinding) {
+  const conclusion = finding.conclusion.trim();
+  if (conclusion && conclusion !== "未形成明确结论。") return conclusion;
+  const firstIssue = finding.issues.find((item) => item.trim());
+  if (firstIssue) return `发现需要关注的问题：${firstIssue}`;
+  const firstSuggestion = finding.suggestions.find((item) => item.trim());
+  if (firstSuggestion) return `建议补充：${firstSuggestion}`;
+  return "这个视角没有发现明确阻塞点。";
+}
+
+function reviewRequiresRevision(review: StageReview) {
+  return Boolean(
+    review.expert_findings.some((finding) => finding.blocking) ||
+      review.result?.can_enter_next_stage === false,
+  );
+}
+
+function reviewNextStepText(review: StageReview, isStale: boolean) {
+  if (isStale) return "这次检查基于旧版本，当前只作为历史参考。";
+  if (review.status === "failed") return "本次检查不可作为判断依据，可以继续人工判断当前方案。";
+  if (review.status === "partial") return "本次检查结果不完整，可以参考已有意见，但不建议只依赖这次检查。";
+  if (reviewRequiresRevision(review)) return "建议先按专家意见修订一次，再继续推进。";
+  return "这版没有发现阻塞问题，可以继续进入下一阶段。";
 }
 
 function parseSseChunk(chunk: string) {
@@ -470,9 +645,13 @@ export default function FlowDetailPage() {
   const [flow, setFlow] = useState<Flow | null>(null);
   const [selectedKey, setSelectedKey] = useState<StageKey | null>(null);
   const [messagesByStage, setMessagesByStage] = useState<Record<string, StageMessage[]>>({});
+  const [reviewsByStage, setReviewsByStage] = useState<Record<string, StageReview[]>>({});
   const [draftByStage, setDraftByStage] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [messagesLoading, setMessagesLoading] = useState(false);
+  const [reviewsLoadingByStage, setReviewsLoadingByStage] = useState<Record<string, boolean>>({});
+  const [reviewGeneratingByStage, setReviewGeneratingByStage] = useState<Record<string, boolean>>({});
+  const [reviewApplying, setReviewApplying] = useState(false);
   const [sending, setSending] = useState(false);
   const [approving, setApproving] = useState(false);
   const [error, setError] = useState("");
@@ -481,6 +660,8 @@ export default function FlowDetailPage() {
   const [assistantSettings, setAssistantSettings] = useState<AssistantRuntimeSettings>(DEFAULT_ASSISTANT_SETTINGS);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const loadedStageKeysRef = useRef<Set<string>>(new Set());
+  const loadedReviewStageKeysRef = useRef<Set<string>>(new Set());
+  const autoReviewStartedRef = useRef<Set<string>>(new Set());
   const bootstrappingStageKeysRef = useRef<Set<string>>(new Set());
   const bootstrapFailedStageKeysRef = useRef<Set<string>>(new Set());
   const providerByModelId = useMemo(
@@ -530,6 +711,52 @@ export default function FlowDetailPage() {
           ? buildFallbackMessages(selectedStage)
           : [])
     : [];
+  const hasPersistedAssistantMessage = currentStageMessages.some(
+    (message) => message.role === "assistant" && message.content.trim(),
+  );
+  const currentStageReviews = selectedStage
+    ? (reviewsByStage[selectedStage.stage_key] || [])
+    : [];
+  const latestStageReview = currentStageReviews.find((review) => review.status !== "superseded") || currentStageReviews[0] || null;
+  const canUseExpertReview = Boolean(selectedStage && EXPERT_REVIEW_STAGE_KEYS.has(selectedStage.stage_key));
+  const canGenerateExpertReviewForCurrentStage = Boolean(
+    canUseExpertReview &&
+      selectedStage?.status !== "approved" &&
+      selectedStage?.status !== "skipped",
+  );
+  const reviewsLoading = Boolean(selectedStage && reviewsLoadingByStage[selectedStage.stage_key]);
+  const reviewGenerating = Boolean(selectedStage && reviewGeneratingByStage[selectedStage.stage_key]);
+  const reviewInProgress = latestStageReview
+    ? latestStageReview.status === "queued" || latestStageReview.status === "running"
+    : false;
+  const currentReviewTargetMessageId = currentStageMessages.reduce<string | null>(
+    (latest, message) => (
+      message.role === "assistant" && message.content.trim()
+        ? message.id
+        : latest
+    ),
+    null,
+  );
+  const reviewIsStale = Boolean(
+    latestStageReview?.draft_message_id &&
+      currentReviewTargetMessageId &&
+      latestStageReview.draft_message_id !== currentReviewTargetMessageId,
+  );
+  const canApplyLatestReview = Boolean(
+    selectedStage &&
+      latestStageReview &&
+      latestStageReview.status !== "queued" &&
+      latestStageReview.status !== "running" &&
+      latestStageReview.status !== "failed" &&
+      latestStageReview.status !== "superseded" &&
+      !reviewIsStale,
+  );
+  const applyStageReviewTarget = latestStageReview && !reviewIsStale ? latestStageReview : null;
+  const hasReviewableContent = Boolean(
+    selectedStage &&
+      !liveStreamState &&
+      hasPersistedAssistantMessage,
+  );
   const lastUserMessageIndex = currentStageMessages.reduce(
     (latest, message, index) => (message.role === "user" ? index : latest),
     -1,
@@ -609,13 +836,85 @@ export default function FlowDetailPage() {
       const data = (await res.json()) as StageChatPayload;
       loadedStageKeysRef.current.add(stageKey);
       updateStageInFlow(data.stage);
-      setMessagesByStage((current) => ({ ...current, [stageKey]: data.messages }));
+      setMessagesByStage((current) => ({ ...current, [stageKey]: sortStageMessages(data.messages) }));
       return data;
     } catch (err: any) {
       setError(err.message || "获取阶段对话失败");
       return null;
     } finally {
       setMessagesLoading(false);
+    }
+  };
+
+  const loadStageReviews = async (stageKey: StageKey, force = false) => {
+    if (!EXPERT_REVIEW_STAGE_KEYS.has(stageKey)) return null;
+    if (!force && loadedReviewStageKeysRef.current.has(stageKey)) return null;
+    setReviewsLoadingByStage((current) => ({ ...current, [stageKey]: true }));
+    try {
+      const res = await fetch(`/api/flows/${flowId}/stages/${stageKey}/reviews`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || "获取专业视角检查失败");
+      }
+      const data = (await res.json()) as StageReview[];
+      loadedReviewStageKeysRef.current.add(stageKey);
+      setReviewsByStage((current) => ({ ...current, [stageKey]: data }));
+      return data;
+    } catch (err: any) {
+      setError(err.message || "获取专业视角检查失败");
+      return null;
+    } finally {
+      setReviewsLoadingByStage((current) => ({ ...current, [stageKey]: false }));
+    }
+  };
+
+  const generateStageReview = async () => {
+    if (!selectedStage || reviewGenerating || !canGenerateExpertReviewForCurrentStage) return;
+    const stageKey = selectedStage.stage_key;
+    setReviewGeneratingByStage((current) => ({ ...current, [stageKey]: true }));
+    setError("");
+    try {
+      const res = await fetch(`/api/flows/${flowId}/stages/${stageKey}/reviews`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildRuntimeSettingsPayload(assistantSettings, providerByModelId)),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || "生成专业视角检查失败");
+      }
+      const review = (await res.json()) as StageReview;
+      loadedReviewStageKeysRef.current.add(stageKey);
+      setReviewsByStage((current) => ({
+        ...current,
+        [stageKey]: [review, ...(current[stageKey] || []).filter((item) => item.id !== review.id)],
+      }));
+    } catch (err: any) {
+      autoReviewStartedRef.current.delete(stageKey);
+      setError(err.message || "生成专业视角检查失败");
+    } finally {
+      setReviewGeneratingByStage((current) => ({ ...current, [stageKey]: false }));
+    }
+  };
+
+  const applyStageReview = async () => {
+    if (!selectedStage || !applyStageReviewTarget || reviewApplying || !canApplyLatestReview) return;
+    const stageKey = selectedStage.stage_key;
+    setReviewApplying(true);
+    setError("");
+    try {
+      await consumeStageStream(
+        stageKey,
+        `/api/flows/${flowId}/stages/${stageKey}/reviews/${applyStageReviewTarget.id}/apply-stream`,
+        undefined,
+        "chat",
+        assistantSettings,
+      );
+      await loadStageReviews(stageKey, true);
+    } catch (err: any) {
+      setError(err.message || "按检查意见修改失败");
+    } finally {
+      setReviewApplying(false);
     }
   };
 
@@ -635,7 +934,7 @@ export default function FlowDetailPage() {
     if (userMessage) {
       setMessagesByStage((current) => ({
         ...current,
-        [stageKey]: [...(current[stageKey] || []), userMessage],
+        [stageKey]: sortStageMessages([...(current[stageKey] || []), userMessage]),
       }));
       setDraftByStage((current) => ({ ...current, [stageKey]: "" }));
     }
@@ -832,7 +1131,7 @@ export default function FlowDetailPage() {
       if (userMessage && !requestAcceptedAtLeastOnce) {
         setMessagesByStage((current) => ({
           ...current,
-          [stageKey]: (current[stageKey] || []).filter((message) => message.id !== userMessage.id),
+          [stageKey]: sortStageMessages((current[stageKey] || []).filter((message) => message.id !== userMessage.id)),
         }));
         setDraftByStage((current) => ({ ...current, [stageKey]: draft || "" }));
       }
@@ -849,6 +1148,56 @@ export default function FlowDetailPage() {
     if (!selectedStage) return;
     void loadStageMessages(selectedStage.stage_key);
   }, [selectedStage?.stage_key]);
+
+  useEffect(() => {
+    if (!selectedStage || !EXPERT_REVIEW_STAGE_KEYS.has(selectedStage.stage_key)) return;
+    void loadStageReviews(selectedStage.stage_key);
+  }, [selectedStage?.stage_key]);
+
+  useEffect(() => {
+    if (
+      !selectedStage ||
+      !canGenerateExpertReviewForCurrentStage ||
+      !hasReviewableContent ||
+      !stageReadyToFinalize ||
+      !currentReviewTargetMessageId ||
+      reviewsLoading ||
+      reviewGenerating ||
+      sending ||
+      approving ||
+      reviewInProgress
+    ) {
+      return;
+    }
+    const stageKey = selectedStage.stage_key;
+    if (!loadedReviewStageKeysRef.current.has(stageKey)) return;
+    if (autoReviewStartedRef.current.has(stageKey)) return;
+    if (currentStageReviews.length > 0) return;
+    autoReviewStartedRef.current.add(stageKey);
+    void generateStageReview();
+  }, [
+    selectedStage?.stage_key,
+    selectedStage?.status,
+    canGenerateExpertReviewForCurrentStage,
+    hasReviewableContent,
+    stageReadyToFinalize,
+    currentReviewTargetMessageId,
+    reviewsLoading,
+    reviewGenerating,
+    sending,
+    approving,
+    reviewInProgress,
+    currentStageReviews.length,
+  ]);
+
+  useEffect(() => {
+    if (!selectedStage || !latestStageReview || !reviewInProgress) return;
+    const stageKey = selectedStage.stage_key;
+    const timer = window.setInterval(() => {
+      void loadStageReviews(stageKey, true);
+    }, 2500);
+    return () => window.clearInterval(timer);
+  }, [selectedStage?.stage_key, latestStageReview?.id, latestStageReview?.status, reviewInProgress]);
 
   useEffect(() => {
     if (!selectedStage || messagesLoading || sending) return;
@@ -919,7 +1268,15 @@ export default function FlowDetailPage() {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [selectedStage?.stage_key, currentStageMessages.length, liveStreamState?.content, messagesLoading]);
+  }, [
+    selectedStage?.stage_key,
+    currentStageMessages.length,
+    liveStreamState?.content,
+    messagesLoading,
+    latestStageReview?.id,
+    latestStageReview?.status,
+    latestStageReview?.expert_findings.length,
+  ]);
 
   const submitMessage = async (event: FormEvent) => {
     event.preventDefault();
@@ -949,6 +1306,10 @@ export default function FlowDetailPage() {
         setFlow(revisionFlow);
         setSelectedKey(stageKey);
         loadedStageKeysRef.current.delete(stageKey);
+        loadedReviewStageKeysRef.current.delete(stageKey);
+        if (EXPERT_REVIEW_STAGE_KEYS.has(stageKey)) {
+          await loadStageReviews(stageKey, true);
+        }
       }
       await consumeStageStream(
         stageKey,
@@ -1040,21 +1401,47 @@ export default function FlowDetailPage() {
 
   const focus = selectedStage.recommendation?.focus || [];
   const draft = draftByStage[selectedStage.stage_key] || "";
-  const displayMessages = liveStreamState
-    ? [
-        ...currentStageMessages,
-        {
-          id: liveStreamState.messageId,
-          stage_id: selectedStage.id,
-          role: "assistant" as const,
-          kind: liveStreamState.kind,
-          content: liveStreamState.content,
-          artifact_id: null,
-          artifact_url: null,
-          created_at: new Date().toISOString(),
-        },
-      ]
-    : currentStageMessages;
+  const displayMessages = sortStageMessages(
+    liveStreamState
+      ? [
+          ...currentStageMessages.filter(shouldDisplayStageMessage),
+          {
+            id: liveStreamState.messageId,
+            stage_id: selectedStage.id,
+            role: "assistant" as const,
+            kind: liveStreamState.kind,
+            content: liveStreamState.content,
+            artifact_id: null,
+            artifact_url: null,
+            created_at: new Date().toISOString(),
+          },
+        ]
+      : currentStageMessages.filter(shouldDisplayStageMessage),
+  );
+  const messageTimestampById = new Map(
+    displayMessages.map((message) => [message.id, messageTimestampValue(message)]),
+  );
+  const timelineItems: ChatTimelineItem[] = [
+    ...displayMessages.map((message, index) => ({
+      type: "message" as const,
+      id: message.id,
+      timestamp: messageTimestampValue(message),
+      order: index,
+      message,
+    })),
+    ...currentStageReviews.map((review, index) => ({
+      type: "review" as const,
+      id: review.id,
+      timestamp: Math.max(
+        timestampValue(review.created_at, Number.MAX_SAFE_INTEGER),
+        review.draft_message_id && messageTimestampById.has(review.draft_message_id)
+          ? (messageTimestampById.get(review.draft_message_id) || 0) + 1
+          : Number.MIN_SAFE_INTEGER,
+      ),
+      order: displayMessages.length + index,
+      review,
+    })),
+  ].sort((left, right) => (left.timestamp - right.timestamp) || (left.order - right.order));
   const artifactGroups = visibleStages
     .map((stage) => ({
       stage,
@@ -1066,6 +1453,243 @@ export default function FlowDetailPage() {
     }))
     .filter((group) => group.stage.status === "approved" && group.artifacts.length > 0)
     .sort((a, b) => a.stage.order - b.stage.order);
+
+  const renderStageMessage = (message: StageMessage) => {
+    const isUser = message.role === "user";
+    const isConclusion = message.kind === "conclusion";
+    const isStreamingAssistant = !isUser && liveStreamState?.messageId === message.id;
+    const copied = copiedMessageId === message.id;
+    return (
+      <div key={message.id} className={`flex gap-2.5 ${isUser ? "justify-end" : "justify-start"}`}>
+        {!isUser && (
+          <div className="flex size-7 shrink-0 items-center justify-center rounded-full overflow-hidden mt-0.5">
+            <Image src="/logo.png" alt="Logo" width={28} height={28} />
+          </div>
+        )}
+        <article className="max-w-[80%] min-w-0 group">
+          <div className={`mb-1 flex items-center gap-2 text-[11px] text-slate-400 ${isUser ? "justify-end" : ""}`}>
+            <span className="font-medium">{isUser ? "你" : ""}</span>
+          </div>
+          <div
+            className={`rounded-xl px-3.5 py-2.5 text-[13px] leading-6 ${
+              isUser
+                ? "bg-gradient-to-r from-indigo-600 to-violet-600 text-white"
+                : isConclusion
+                  ? "ring-1 ring-amber-300/50 dark:ring-amber-500/20 bg-amber-50/80 dark:bg-amber-900/15 backdrop-blur-sm text-slate-800 dark:text-amber-100"
+                  : "ring-1 ring-indigo-200/60 dark:ring-indigo-500/20 bg-indigo-50/50 dark:bg-indigo-900/10 backdrop-blur-sm text-slate-800 dark:text-indigo-100"
+            }`}
+          >
+            {isConclusion && (
+              <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold text-amber-600 dark:text-amber-400">
+                <FileText size={12} />
+                <span>阶段结论</span>
+              </div>
+            )}
+            {!isUser && !isConclusion && (
+              <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold text-indigo-600 dark:text-indigo-400">
+                <Sparkles size={12} />
+                <span>阶段助手</span>
+              </div>
+            )}
+            {isUser ? (
+              <div className="whitespace-pre-wrap">{message.content}</div>
+            ) : (
+              <div className="chat-md overflow-x-auto">
+                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+                  {message.content}
+                </ReactMarkdown>
+              </div>
+            )}
+            {isStreamingAssistant && (sending || approving || reviewApplying) && (
+              <div className="mt-2 space-y-1.5 text-[11px] opacity-60">
+                <div className="flex items-center gap-1.5">
+                  <Loader2 size={11} className="animate-spin" />
+                  <span>{liveStreamState?.reasoning ? "正在思考中" : "正在思考"}</span>
+                  <ThinkingDots />
+                </div>
+                {liveStreamState?.reasoning ? (
+                  <div className="rounded-lg bg-black/5 px-2 py-1 text-[11px] leading-5 text-slate-500 dark:bg-white/5 dark:text-slate-400">
+                    {liveStreamState.reasoning}
+                  </div>
+                ) : null}
+              </div>
+            )}
+          </div>
+          {!isUser && !isStreamingAssistant && message.content.trim() && (
+            <div className="mt-1 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              <button
+                type="button"
+                onClick={() => void copyMessage(message)}
+                className="inline-flex items-center gap-1 rounded-lg px-1.5 py-0.5 text-[11px] text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:text-slate-500 dark:hover:text-slate-300 dark:hover:bg-white/5 transition-colors"
+              >
+                {copied ? <Check size={12} /> : <Copy size={12} />}
+                {copied ? "已复制" : "复制"}
+              </button>
+              {message.artifact_url && (
+                <a
+                  href={buildArtifactDownloadUrl(message.artifact_id, message.artifact_url)}
+                  download
+                  className="inline-flex items-center gap-1 rounded-lg px-1.5 py-0.5 text-[11px] text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:text-slate-500 dark:hover:text-indigo-400 dark:hover:bg-indigo-500/10 transition-colors"
+                >
+                  <FileDown size={12} />
+                  下载
+                </a>
+              )}
+            </div>
+          )}
+        </article>
+        {isUser && (
+          <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-r from-indigo-600 to-violet-600 text-white mt-0.5">
+            <User size={13} />
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderStageReview = (review: StageReview) => {
+    const itemReviewInProgress = review.status === "queued" || review.status === "running";
+    const itemReviewIsStale = Boolean(
+      review.status === "superseded" ||
+        (
+          review.draft_message_id &&
+          currentReviewTargetMessageId &&
+          review.draft_message_id !== currentReviewTargetMessageId
+        ),
+    );
+    const itemCanApply = Boolean(
+      review.id === applyStageReviewTarget?.id &&
+        canApplyLatestReview &&
+        reviewRequiresRevision(review) &&
+        !itemReviewInProgress &&
+        review.status !== "failed" &&
+        review.status !== "superseded",
+    );
+    const itemNextStepText = reviewNextStepText(review, itemReviewIsStale);
+    const itemSummaryItems = firstNonEmptyReviewItems(
+      review.result?.main_risks,
+      review.result?.suggested_supplements,
+      review.result?.focus_for_user,
+      review.result?.user_confirmation_questions,
+    );
+
+    return (
+      <div key={`review-${review.id}`} className="space-y-4">
+        {itemReviewInProgress ? (
+          <div className="flex justify-start gap-2.5">
+            <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-violet-100 text-violet-600 ring-1 ring-violet-200/70 dark:bg-violet-500/15 dark:text-violet-300 dark:ring-violet-500/20">
+              <Loader2 size={13} className="animate-spin" />
+            </div>
+            <article className="max-w-[80%] min-w-0">
+              <div className="mb-1 flex items-center gap-2 text-[11px] text-slate-400">
+                <span className="font-medium text-violet-600 dark:text-violet-300">专家组</span>
+              </div>
+              <div className="rounded-xl bg-violet-50/70 px-3.5 py-2.5 text-[13px] leading-6 text-slate-700 ring-1 ring-violet-200/60 dark:bg-violet-500/10 dark:text-violet-50 dark:ring-violet-500/20">
+                <div className="flex items-center gap-1.5">
+                  <span>专家组正在检查这版方案</span>
+                  <ThinkingDots />
+                </div>
+              </div>
+            </article>
+          </div>
+        ) : (
+          review.expert_findings.map((finding) => {
+            const expertMeta = getExpertAvatarMeta(finding.agent_id);
+            const issueItems = finding.issues.filter((item) => item.trim()).slice(0, 3);
+            const suggestionItems = finding.suggestions.filter((item) => item.trim()).slice(0, 3);
+            return (
+              <div key={`${review.id}-${finding.agent_id}`} className="flex justify-start gap-2.5">
+                <div className={cn("mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full text-[12px] font-semibold ring-1", expertMeta.className)}>
+                  {expertMeta.label}
+                </div>
+                <article className="max-w-[80%] min-w-0">
+                  <div className="mb-1 flex items-center gap-2 text-[11px] text-slate-400">
+                    <span className={cn("font-medium", expertMeta.textClassName)}>{finding.agent_name}</span>
+                    {finding.blocking && (
+                      <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
+                        需处理
+                      </span>
+                    )}
+                  </div>
+                  <div className={cn("rounded-xl px-3.5 py-2.5 text-[13px] leading-6 ring-1", expertMeta.bubbleClassName)}>
+                    <p>{expertConclusionText(finding)}</p>
+                    {issueItems.length > 0 && (
+                      <div className="mt-2">
+                        <div className="text-[11px] font-semibold opacity-70">发现的问题</div>
+                        <ul className="mt-1 list-disc space-y-1 pl-4 text-[12px] leading-5 opacity-85">
+                          {issueItems.map((item) => <li key={item}>{item}</li>)}
+                        </ul>
+                      </div>
+                    )}
+                    {suggestionItems.length > 0 && (
+                      <div className="mt-2">
+                        <div className="text-[11px] font-semibold opacity-70">建议修改</div>
+                        <ul className="mt-1 list-disc space-y-1 pl-4 text-[12px] leading-5 opacity-85">
+                          {suggestionItems.map((item) => <li key={item}>{item}</li>)}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                </article>
+              </div>
+            );
+          })
+        )}
+
+        {!itemReviewInProgress && (
+          <div className="flex justify-start gap-2.5">
+            <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-violet-100 text-[12px] font-semibold text-violet-600 ring-1 ring-violet-200/70 dark:bg-violet-500/15 dark:text-violet-300 dark:ring-violet-500/20">
+              组
+            </div>
+            <article className="max-w-[80%] min-w-0">
+              <div className="mb-1 flex items-center gap-2 text-[11px] text-slate-400">
+                <span className="font-medium text-violet-600 dark:text-violet-300">专家组结论</span>
+                {review.created_at ? <span>{formatDate(review.created_at)}</span> : null}
+              </div>
+              <div className="rounded-xl bg-violet-50/70 px-3.5 py-2.5 text-[13px] leading-6 text-slate-800 ring-1 ring-violet-200/60 dark:bg-violet-500/10 dark:text-violet-50 dark:ring-violet-500/20">
+                {itemReviewIsStale && (
+                  <div className="mb-2 inline-flex items-center rounded bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
+                    基于旧版本
+                  </div>
+                )}
+                <div className="chat-md text-[13px] leading-6">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+                    {review.summary || review.result?.why || "专业视角检查已生成。"}
+                  </ReactMarkdown>
+                </div>
+                {itemSummaryItems.length > 0 && (
+                  <div className="mt-3 rounded-lg bg-white/60 px-3 py-2 text-[12px] leading-5 text-slate-600 ring-1 ring-violet-100/70 dark:bg-white/5 dark:text-slate-300 dark:ring-white/10">
+                    <div className="mb-1 font-medium text-slate-700 dark:text-slate-200">重点处理</div>
+                    <ul className="list-disc space-y-1 pl-4">
+                      {itemSummaryItems.slice(0, 3).map((item) => <li key={item}>{item}</li>)}
+                    </ul>
+                  </div>
+                )}
+                <div className="mt-3 rounded-lg bg-white/70 px-3 py-2 text-[12px] font-medium leading-5 text-violet-700 ring-1 ring-violet-100/80 dark:bg-white/5 dark:text-violet-200 dark:ring-white/10">
+                  {itemNextStepText}
+                </div>
+                {itemCanApply && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={applyStageReview}
+                      disabled={reviewApplying || sending || approving}
+                      className="h-8 gap-1.5 rounded-lg bg-violet-600 px-3 text-xs text-white hover:bg-violet-700 disabled:opacity-50"
+                      title="让阶段助手根据检查意见生成修订版方案"
+                    >
+                      {reviewApplying ? <Loader2 size={12} className="animate-spin" /> : <Wrench size={12} />}
+                      按意见修改方案
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </article>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="flex h-screen flex-col text-slate-950 dark:text-slate-50" style={{ backgroundColor: '#f9f9ff' }}>
@@ -1213,99 +1837,24 @@ export default function FlowDetailPage() {
                 </div>
               )}
 
-              {displayMessages.map((message) => {
-                const isUser = message.role === "user";
-                const isConclusion = message.kind === "conclusion";
-                const isStreamingAssistant = !isUser && liveStreamState?.messageId === message.id;
-                const copied = copiedMessageId === message.id;
-                return (
-                  <div key={message.id} className={`flex gap-2.5 ${isUser ? "justify-end" : "justify-start"}`}>
-                    {!isUser && (
-                      <div className="flex size-7 shrink-0 items-center justify-center rounded-full overflow-hidden mt-0.5">
-                        <Image src="/logo.png" alt="Logo" width={28} height={28} />
-                      </div>
-                    )}
-                    <article className="max-w-[80%] min-w-0 group">
-                      <div className={`mb-1 flex items-center gap-2 text-[11px] text-slate-400 ${isUser ? "justify-end" : ""}`}>
-                        <span className="font-medium">{isUser ? "你" : ""}</span>
-                      </div>
-                      <div
-                        className={`rounded-xl px-3.5 py-2.5 text-[13px] leading-6 ${
-                          isUser
-                            ? "bg-gradient-to-r from-indigo-600 to-violet-600 text-white"
-                            : isConclusion
-                              ? "ring-1 ring-amber-300/50 dark:ring-amber-500/20 bg-amber-50/80 dark:bg-amber-900/15 backdrop-blur-sm text-slate-800 dark:text-amber-100"
-                              : "ring-1 ring-indigo-200/60 dark:ring-indigo-500/20 bg-indigo-50/50 dark:bg-indigo-900/10 backdrop-blur-sm text-slate-800 dark:text-indigo-100"
-                        }`}
-                      >
-                        {isConclusion && (
-                          <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold text-amber-600 dark:text-amber-400">
-                            <FileText size={12} />
-                            <span>阶段结论</span>
-                          </div>
-                        )}
-                        {!isUser && !isConclusion && (
-                          <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold text-indigo-600 dark:text-indigo-400">
-                            <Sparkles size={12} />
-                            <span>阶段助手</span>
-                          </div>
-                        )}
-                        {isUser ? (
-                          <div className="whitespace-pre-wrap">{message.content}</div>
-                        ) : (
-                          <div className="chat-md overflow-x-auto">
-                            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
-                              {message.content}
-                            </ReactMarkdown>
-                          </div>
-                        )}
-                        {isStreamingAssistant && (sending || approving) && (
-                          <div className="mt-2 space-y-1.5 text-[11px] opacity-60">
-                            <div className="flex items-center gap-1.5">
-                              <Loader2 size={11} className="animate-spin" />
-                              <span>{liveStreamState?.reasoning ? "正在思考中" : "正在思考"}</span>
-                              <ThinkingDots />
-                            </div>
-                            {liveStreamState?.reasoning ? (
-                              <div className="rounded-lg bg-black/5 px-2 py-1 text-[11px] leading-5 text-slate-500 dark:bg-white/5 dark:text-slate-400">
-                                {liveStreamState.reasoning}
-                              </div>
-                            ) : null}
-                          </div>
-                        )}
-                      </div>
-                      {/* Assistant action bar — appears on hover */}
-                      {!isUser && !isStreamingAssistant && message.content.trim() && (
-                        <div className="mt-1 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button
-                            type="button"
-                            onClick={() => void copyMessage(message)}
-                            className="inline-flex items-center gap-1 rounded-lg px-1.5 py-0.5 text-[11px] text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:text-slate-500 dark:hover:text-slate-300 dark:hover:bg-white/5 transition-colors"
-                          >
-                            {copied ? <Check size={12} /> : <Copy size={12} />}
-                            {copied ? "已复制" : "复制"}
-                          </button>
-                          {message.artifact_url && (
-                            <a
-                              href={buildArtifactDownloadUrl(message.artifact_id, message.artifact_url)}
-                              download
-                              className="inline-flex items-center gap-1 rounded-lg px-1.5 py-0.5 text-[11px] text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:text-slate-500 dark:hover:text-indigo-400 dark:hover:bg-indigo-500/10 transition-colors"
-                            >
-                              <FileDown size={12} />
-                              下载
-                            </a>
-                          )}
-                        </div>
-                      )}
-                    </article>
-                    {isUser && (
-                      <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-r from-indigo-600 to-violet-600 text-white mt-0.5">
-                        <User size={13} />
-                      </div>
-                    )}
+              {timelineItems.map((item) =>
+                item.type === "message"
+                  ? renderStageMessage(item.message)
+                  : renderStageReview(item.review),
+              )}
+
+              {canGenerateExpertReviewForCurrentStage && (reviewsLoading || reviewGenerating) && currentStageReviews.length === 0 && (
+                <div className="flex justify-start gap-2.5">
+                  <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-violet-100 text-violet-600 ring-1 ring-violet-200/70 dark:bg-violet-500/15 dark:text-violet-300 dark:ring-violet-500/20">
+                    <Loader2 size={13} className="animate-spin" />
                   </div>
-                );
-              })}
+                  <article className="max-w-[80%] min-w-0">
+                    <div className="rounded-xl bg-violet-50/70 px-3.5 py-2.5 text-[13px] leading-6 text-slate-600 ring-1 ring-violet-200/60 dark:bg-violet-500/10 dark:text-violet-50 dark:ring-violet-500/20">
+                      {reviewGenerating ? "正在生成专业视角检查..." : "正在读取专业视角检查..."}
+                    </div>
+                  </article>
+                </div>
+              )}
 
               {!messagesLoading && currentStageMessages.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-12 text-slate-400">
@@ -1440,70 +1989,70 @@ export default function FlowDetailPage() {
           </section>
 
           {/* Right column — artifacts */}
-          <aside className="w-[300px] shrink-0 self-start rounded-lg bg-white dark:bg-slate-900 shadow-[0_1px_3px_rgba(0,0,0,0.06),0_1px_2px_rgba(0,0,0,0.04)] bg-no-repeat flex flex-col" style={{ backgroundImage: "url('/model-bg.png')", backgroundPosition: 'center 0px', backgroundSize: 'contain', minHeight: '245px' }}>
-            <div className="px-4 pt-5 pb-4 flex items-center justify-between">
-              <h3 className="text-base font-semibold leading-none text-[#333] dark:text-slate-200">产物</h3>
-              {artifactGroups.length > 0 && (
-                <a
-                  href={buildAllArtifactsDownloadUrl(flowId)}
-                  download
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-50 px-2.5 py-1.5 text-[11px] font-medium text-indigo-600 transition-all hover:bg-indigo-100 hover:shadow-sm dark:bg-indigo-500/10 dark:text-indigo-400 dark:hover:bg-indigo-500/20"
-                >
-                  <FileDown size={13} />
-                  下载全部
-                </a>
-              )}
-            </div>
-            <div className="flex-1 overflow-y-auto px-4 py-3">
-              {artifactGroups.length > 0 ? (
-                <div className="space-y-3">
-                  {artifactGroups.map((group) => (
-                    <div key={group.stage.id}>
-                      {/* Stage header — de-emphasized */}
-                      <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-slate-400 dark:text-slate-500">
-                        <span>{group.stage.title}</span>
-                        <span className="text-slate-300 dark:text-slate-600">·</span>
-                        <Badge
-                          variant={STATUS_BADGE_VARIANT[group.stage.status]}
-                          className="px-1 py-px text-[10px] leading-4 bg-transparent shadow-none"
-                        >
-                          {STATUS_LABEL[group.stage.status]}
-                        </Badge>
-                      </div>
-
-                      {/* Artifact cards — download-focused */}
-                      <div className="space-y-1.5">
-                        {group.artifacts.map((artifact, index) => (
-                          <a
-                            key={`${group.stage.id}-${index}-${artifact.url || artifact.artifact_id || artifact.label}`}
-                            href={buildArtifactDownloadUrl(artifact.artifact_id, artifact.url)}
-                            download
-                            className="group flex items-center gap-2.5 rounded-lg border border-slate-200/70 dark:border-slate-700/40 bg-gradient-to-r from-white to-slate-50/50 dark:from-slate-800 dark:to-slate-800/50 px-3 py-2.5 transition-all hover:border-indigo-300 hover:shadow-sm hover:shadow-indigo-500/5 dark:hover:border-indigo-500/30 dark:hover:shadow-indigo-500/5"
+          <aside className="w-[300px] shrink-0 self-start flex flex-col gap-4">
+            <section className="rounded-lg bg-white dark:bg-slate-900 shadow-[0_1px_3px_rgba(0,0,0,0.06),0_1px_2px_rgba(0,0,0,0.04)] bg-no-repeat flex flex-col" style={{ backgroundImage: "url('/model-bg.png')", backgroundPosition: 'center 0px', backgroundSize: 'contain', minHeight: '245px' }}>
+              <div className="px-4 pt-5 pb-4 flex items-center justify-between">
+                <h3 className="text-base font-semibold leading-none text-[#333] dark:text-slate-200">产物</h3>
+                {artifactGroups.length > 0 && (
+                  <a
+                    href={buildAllArtifactsDownloadUrl(flowId)}
+                    download
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-50 px-2.5 py-1.5 text-[11px] font-medium text-indigo-600 transition-all hover:bg-indigo-100 hover:shadow-sm dark:bg-indigo-500/10 dark:text-indigo-400 dark:hover:bg-indigo-500/20"
+                  >
+                    <FileDown size={13} />
+                    下载全部
+                  </a>
+                )}
+              </div>
+              <div className="flex-1 overflow-y-auto px-4 py-3">
+                {artifactGroups.length > 0 ? (
+                  <div className="space-y-3">
+                    {artifactGroups.map((group) => (
+                      <div key={group.stage.id}>
+                        <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-slate-400 dark:text-slate-500">
+                          <span>{group.stage.title}</span>
+                          <span className="text-slate-300 dark:text-slate-600">·</span>
+                          <Badge
+                            variant={STATUS_BADGE_VARIANT[group.stage.status]}
+                            className="px-1 py-px text-[10px] leading-4 bg-transparent shadow-none"
                           >
-                            <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-500 dark:bg-indigo-500/10 dark:text-indigo-400 transition-colors group-hover:bg-indigo-100 dark:group-hover:bg-indigo-500/20">
-                              <FileText size={14} />
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="truncate text-[13px] font-medium text-slate-700 dark:text-slate-200">{artifact.label || artifact.type || "附件"}</div>
-                              {artifact.created_at ? (
-                                <div className="text-[11px] text-slate-400 dark:text-slate-500">{formatDate(artifact.created_at)}</div>
-                              ) : null}
-                            </div>
-                            <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-indigo-50 text-indigo-500 dark:bg-indigo-500/15 dark:text-indigo-400 opacity-80 transition-all group-hover:bg-indigo-500 group-hover:text-white dark:group-hover:bg-indigo-500 group-hover:opacity-100">
-                              <FileDown size={13} />
-                            </div>
-                          </a>
-                        ))}
+                            {STATUS_LABEL[group.stage.status]}
+                          </Badge>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          {group.artifacts.map((artifact, index) => (
+                            <a
+                              key={`${group.stage.id}-${index}-${artifact.url || artifact.artifact_id || artifact.label}`}
+                              href={buildArtifactDownloadUrl(artifact.artifact_id, artifact.url)}
+                              download
+                              className="group flex items-center gap-2.5 rounded-lg border border-slate-200/70 dark:border-slate-700/40 bg-gradient-to-r from-white to-slate-50/50 dark:from-slate-800 dark:to-slate-800/50 px-3 py-2.5 transition-all hover:border-indigo-300 hover:shadow-sm hover:shadow-indigo-500/5 dark:hover:border-indigo-500/30 dark:hover:shadow-indigo-500/5"
+                            >
+                              <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-500 dark:bg-indigo-500/10 dark:text-indigo-400 transition-colors group-hover:bg-indigo-100 dark:group-hover:bg-indigo-500/20">
+                                <FileText size={14} />
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate text-[13px] font-medium text-slate-700 dark:text-slate-200">{artifact.label || artifact.type || "附件"}</div>
+                                {artifact.created_at ? (
+                                  <div className="text-[11px] text-slate-400 dark:text-slate-500">{formatDate(artifact.created_at)}</div>
+                                ) : null}
+                              </div>
+                              <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-indigo-50 text-indigo-500 dark:bg-indigo-500/15 dark:text-indigo-400 opacity-80 transition-all group-hover:bg-indigo-500 group-hover:text-white dark:group-hover:bg-indigo-500 group-hover:opacity-100">
+                                <FileDown size={13} />
+                              </div>
+                            </a>
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="flex-1 flex flex-col items-center justify-center gap-3 text-slate-400 dark:text-slate-500 py-8">
-                  <img src="/artifacts-empty.svg" alt="暂无产物" width={120} height={120} className="opacity-70 dark:opacity-40" />
-                </div>
-              )}
-            </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex-1 flex flex-col items-center justify-center gap-3 text-slate-400 dark:text-slate-500 py-8">
+                    <img src="/artifacts-empty.svg" alt="暂无产物" width={120} height={120} className="opacity-70 dark:opacity-40" />
+                  </div>
+                )}
+              </div>
+            </section>
           </aside>
         </div>
       </main>

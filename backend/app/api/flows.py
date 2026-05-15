@@ -16,6 +16,7 @@ from app.api.flow_schemas import (
     UpdateWorkspaceRequest,
     WorkspaceResponse,
     WorkspaceStageChatResponse,
+    WorkspaceStageReviewResponse,
     WorkspaceStageResponse,
 )
 from app.core.auth import get_current_user
@@ -28,8 +29,12 @@ from app.api.workspaces import (
     create_workspace as create_workspace_impl,
     delete_workspace as delete_workspace_impl,
     finalize_workspace_stage_stream as finalize_workspace_stage_stream_impl,
+    apply_workspace_stage_review as apply_workspace_stage_review_impl,
+    apply_workspace_stage_review_stream as apply_workspace_stage_review_stream_impl,
+    create_workspace_stage_review as create_workspace_stage_review_impl,
     get_workspace as get_workspace_impl,
     get_workspace_stage_messages as get_workspace_stage_messages_impl,
+    list_workspace_stage_reviews as list_workspace_stage_reviews_impl,
     list_workspace_stages as list_workspace_stages_impl,
     list_workspaces as list_workspaces_impl,
     optional_bearer,
@@ -123,6 +128,76 @@ async def get_flow_stage_messages(
     return await get_workspace_stage_messages_impl(
         workspace_id=workspace_id,
         stage_key=stage_key,
+        db=db,
+        user=user,
+    )
+
+
+@router.get("/flows/{workspace_id}/stages/{stage_key}/reviews", response_model=list[WorkspaceStageReviewResponse])
+async def list_flow_stage_reviews(
+    workspace_id: str,
+    stage_key: WorkspaceStageKey,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return await list_workspace_stage_reviews_impl(
+        workspace_id=workspace_id,
+        stage_key=stage_key,
+        db=db,
+        user=user,
+    )
+
+
+@router.post("/flows/{workspace_id}/stages/{stage_key}/reviews", response_model=WorkspaceStageReviewResponse)
+async def create_flow_stage_review(
+    workspace_id: str,
+    stage_key: WorkspaceStageKey,
+    req: Optional[StageRunSettingsRequest] = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return await create_workspace_stage_review_impl(
+        workspace_id=workspace_id,
+        stage_key=stage_key,
+        req=req,
+        db=db,
+        user=user,
+    )
+
+
+@router.post("/flows/{workspace_id}/stages/{stage_key}/reviews/{review_id}/apply", response_model=WorkspaceStageChatResponse)
+async def apply_flow_stage_review(
+    workspace_id: str,
+    stage_key: WorkspaceStageKey,
+    review_id: str,
+    req: Optional[StageRunSettingsRequest] = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return await apply_workspace_stage_review_impl(
+        workspace_id=workspace_id,
+        stage_key=stage_key,
+        review_id=review_id,
+        req=req,
+        db=db,
+        user=user,
+    )
+
+
+@router.post("/flows/{workspace_id}/stages/{stage_key}/reviews/{review_id}/apply-stream")
+async def apply_flow_stage_review_stream(
+    workspace_id: str,
+    stage_key: WorkspaceStageKey,
+    review_id: str,
+    req: Optional[StageRunSettingsRequest] = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return await apply_workspace_stage_review_stream_impl(
+        workspace_id=workspace_id,
+        stage_key=stage_key,
+        review_id=review_id,
+        req=req,
         db=db,
         user=user,
     )

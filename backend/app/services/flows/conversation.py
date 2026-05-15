@@ -113,6 +113,15 @@ def runtime_reasoning_effort(runtime_options: Optional[Dict[str, Any]]) -> Optio
     return value or None
 
 
+def stage_runtime_reasoning_effort(
+    stage_key: WorkspaceStageKey,
+    runtime_options: Optional[Dict[str, Any]],
+) -> Optional[str]:
+    if stage_key == WorkspaceStageKey.REQUIREMENTS:
+        return "low"
+    return runtime_reasoning_effort(runtime_options)
+
+
 def parse_json_object_loose(content: str) -> Optional[Dict[str, Any]]:
     text = content.strip()
     if not text:
@@ -395,6 +404,44 @@ def cleanup_stage_document_markdown(stage: WorkspaceStage, content: str) -> str:
     return text
 
 
+REQUIREMENTS_OFF_SCOPE_QUESTION_PATTERNS = (
+    r"(?:需要|要|有哪些|包含哪些|设计|规划|拆分|列出).{0,8}(?:功能模块|功能清单|模块)",
+    r"(?:页面|界面).{0,8}(?:怎么|如何|设计|规划|布局|结构)",
+    r"(?:后台|管理端).{0,8}(?:怎么|如何|设计|做|规划)",
+    r"(?:权限|角色).{0,8}(?:怎么|如何|设计|划分|分)",
+    r"(?:技术|技术栈|架构).{0,8}(?:怎么|如何|选|设计|规划)",
+    r"(?:接口|API|数据库|字段|数据表).{0,8}(?:怎么|如何|设计|规划|定义)",
+    r"(?:完整流程|业务流程).{0,8}(?:是什么|怎么|如何|设计|规划|梳理)",
+)
+
+
+def _requirements_reply_has_off_scope_question(content: str) -> bool:
+    sentences = _split_cn_sentences(normalize_sse_buffer(content))
+    for sentence in sentences:
+        if not sentence.endswith(("？", "?")):
+            continue
+        if any(re.search(pattern, sentence, re.I) for pattern in REQUIREMENTS_OFF_SCOPE_QUESTION_PATTERNS):
+            return True
+    return False
+
+
+def _remove_requirements_off_scope_questions(content: str) -> str:
+    sentences = _split_cn_sentences(normalize_sse_buffer(content))
+    if not sentences:
+        return normalize_sse_buffer(content)
+
+    kept = [
+        sentence
+        for sentence in sentences
+        if not (
+            sentence.endswith(("？", "?"))
+            and any(re.search(pattern, sentence, re.I) for pattern in REQUIREMENTS_OFF_SCOPE_QUESTION_PATTERNS)
+        )
+    ]
+    cleaned = "".join(kept).strip()
+    return normalize_stage_output_paragraphs(cleaned, should_finalize=False)
+
+
 async def rewrite_stage_chat_reply_if_needed(
     db: AsyncSession,
     user: User,
@@ -419,6 +466,13 @@ async def rewrite_stage_chat_reply_if_needed(
         runtime_options,
         resolve_generation_model,
     )
+    if (
+        stage.stage_key == WorkspaceStageKey.REQUIREMENTS
+        and _requirements_reply_has_off_scope_question(draft_reply)
+    ):
+        cleaned_reply = _remove_requirements_off_scope_questions(draft_reply)
+        if cleaned_reply:
+            return cleaned_reply
     return draft_reply
 
 
@@ -584,18 +638,20 @@ async def assess_latest_user_message_finalize_intent(
    这种情况下，应该先继续正常对话，不要直接整理阶段结论。
 
 2. closure_signal
-   含义：用户没有明显补充新信息，主要是在认可当前理解、表示差不多了、可以继续，或者只是轻量回应。
+   含义：用户没有明显补充新信息，主要是在认可当前理解、表达收束、回应推进询问，或者只是轻量回应。
    这种情况下，如果阶段内容本身也已经足够，可以整理阶段结论。
 
 3. explicit_finalize_request
-   含义：用户明确要求“直接生成结论 / 直接整理文档 / 不要再问了 / 结束这一阶段”。
+   含义：用户明确要求结束当前阶段、整理当前结论，或进入后续阶段。
    这种情况下，可以直接整理阶段结论。
 
 判断原则：
-- 只要这条消息里出现了会改变当前阶段理解的新信息、新限制、新方向，优先判为 new_information。
-- 不要因为用户语气简短，就误判成 closure_signal。
+- 按语义和上下文判断，不按固定词表或字面关键词判断。
+- 先看用户这句话有没有新增事实、新限制、新方向或纠正；只要会改变当前阶段理解，就判为 new_information。
+- 短回复要结合上一条助手回复理解：如果它是在回应助手的确认、收束或推进询问，且没有新增事实，可以判为 closure_signal；如果它是在要求继续解释或继续讨论，就不是收束。
+- 用户明确表达要结束本阶段、整理当前结论、停止追问或进入后续阶段，且没有夹带新事实时，判为 explicit_finalize_request。
 - 宁可保守一点，也不要把补充信息误判成可以直接整理结论。
-- 如果用户只是表达“没有补充了”“可以了”“就按这个来”“继续下一阶段”“直接整理吧”这类收束或确认信号，而且没有新增事实，优先判为 closure_signal 或 explicit_finalize_request，而不是 new_information。
+- 这个判断只决定用户意图，不判断内容是否真的足够；内容充分性会由下一步单独判断。
 
 当前阶段：{stage.title}
 
@@ -1039,7 +1095,7 @@ async def generate_requirements_chat_reply_with_llm(
             should_finalize=False,
             allow_continuation=True,
             resolve_generation_model=resolve_generation_model,
-            reasoning_effort=runtime_reasoning_effort(runtime_options),
+            reasoning_effort=stage_runtime_reasoning_effort(stage.stage_key, runtime_options),
         )
         if not draft_reply:
             return None
@@ -1119,7 +1175,7 @@ async def generate_requirements_conclusion_with_llm(
             should_finalize=True,
             allow_continuation=True,
             resolve_generation_model=resolve_generation_model,
-            reasoning_effort=runtime_reasoning_effort(runtime_options),
+            reasoning_effort=stage_runtime_reasoning_effort(stage.stage_key, runtime_options),
         )
         return draft_reply
     except Exception as exc:
@@ -1201,7 +1257,7 @@ async def generate_generic_stage_chat_reply_with_llm(
             should_finalize=False,
             allow_continuation=True,
             resolve_generation_model=resolve_generation_model,
-            reasoning_effort=runtime_reasoning_effort(runtime_options),
+            reasoning_effort=stage_runtime_reasoning_effort(stage.stage_key, runtime_options),
         )
         if not draft_reply:
             return None
@@ -1284,7 +1340,7 @@ async def generate_generic_stage_conclusion_with_llm(
             should_finalize=True,
             allow_continuation=True,
             resolve_generation_model=resolve_generation_model,
-            reasoning_effort=runtime_reasoning_effort(runtime_options),
+            reasoning_effort=stage_runtime_reasoning_effort(stage.stage_key, runtime_options),
         )
     except Exception as exc:
         logger.warning(
@@ -1883,6 +1939,7 @@ async def stream_stage_reply(
     serialize_stage_message_response: Callable[[WorkspaceStageMessage], Dict[str, Any]],
     force_finalize: bool = False,
     runtime_options: Optional[Dict[str, Any]] = None,
+    extra_instruction: Optional[str] = None,
 ):
     async def event_generator():
         built_content = ""
@@ -1966,7 +2023,7 @@ async def stream_stage_reply(
                         workspace,
                         messages,
                         memory_context,
-                        extra_instruction=forced_conclusion_instruction,
+                        extra_instruction=merge_stage_instructions(forced_conclusion_instruction, extra_instruction),
                         stage_skill_context=stage_skill_context,
                         external_reference_context=external_reference_context,
                     )
@@ -1977,7 +2034,7 @@ async def stream_stage_reply(
                         stages,
                         messages,
                         memory_context,
-                        extra_instruction=forced_conclusion_instruction,
+                        extra_instruction=merge_stage_instructions(forced_conclusion_instruction, extra_instruction),
                         stage_skill_context=stage_skill_context,
                         external_reference_context=external_reference_context,
                     )
@@ -2040,6 +2097,7 @@ async def stream_stage_reply(
                             stage_flow_instruction,
                             blocker_instruction,
                             not_ready_instruction,
+                            extra_instruction,
                         ),
                         stage_skill_context=stage_skill_context,
                         external_reference_context=external_reference_context,
@@ -2055,6 +2113,7 @@ async def stream_stage_reply(
                             stage_flow_instruction,
                             blocker_instruction,
                             not_ready_instruction,
+                            extra_instruction,
                         ),
                         stage_skill_context=stage_skill_context,
                         external_reference_context=external_reference_context,
@@ -2117,7 +2176,7 @@ async def stream_stage_reply(
                         resolve_generation_model=resolve_generation_model,
                         max_tokens=stream_max_tokens,
                         temperature=stream_temperature,
-                        reasoning_effort=runtime_reasoning_effort(runtime_options),
+                        reasoning_effort=stage_runtime_reasoning_effort(stage.stage_key, runtime_options),
                     )
                     if stream is None:
                         yield {"event": "error", "data": "没有可用的大模型配置，无法生成真实回复。"}
@@ -2174,7 +2233,7 @@ async def stream_stage_reply(
                             should_finalize=should_finalize,
                             allow_continuation=False if stage.stage_key == WorkspaceStageKey.DEPLOYMENT and should_finalize else True,
                             resolve_generation_model=resolve_generation_model,
-                            reasoning_effort=runtime_reasoning_effort(runtime_options),
+                            reasoning_effort=stage_runtime_reasoning_effort(stage.stage_key, runtime_options),
                         )
                         if not fallback_text:
                             if built_reasoning.strip():
@@ -2221,7 +2280,7 @@ async def stream_stage_reply(
                             should_finalize=True,
                             allow_continuation=False,
                             resolve_generation_model=resolve_generation_model,
-                            reasoning_effort=runtime_reasoning_effort(runtime_options),
+                            reasoning_effort=stage_runtime_reasoning_effort(stage.stage_key, runtime_options),
                         )
                         if not fallback_text:
                             fallback_text = render_final_delivery_fallback(stages, stage)
@@ -2239,7 +2298,7 @@ async def stream_stage_reply(
                             should_finalize=should_finalize,
                             allow_continuation=True,
                             resolve_generation_model=resolve_generation_model,
-                            reasoning_effort=runtime_reasoning_effort(runtime_options),
+                            reasoning_effort=stage_runtime_reasoning_effort(stage.stage_key, runtime_options),
                             seed_content=built_content,
                         )
 

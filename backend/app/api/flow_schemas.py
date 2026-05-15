@@ -14,6 +14,7 @@ from app.models.models import (
     WorkspaceStage,
     WorkspaceStageKey,
     WorkspaceStageMessage,
+    WorkspaceStageReview,
     WorkspaceStageStatus,
     WorkspaceStatus,
 )
@@ -163,6 +164,66 @@ class SendWorkspaceStageMessageRequest(BaseModel):
 class WorkspaceStageChatResponse(BaseModel):
     stage: WorkspaceStageResponse
     messages: List[WorkspaceStageMessageResponse]
+
+
+class WorkspaceStageReviewResponse(BaseModel):
+    id: str
+    workspace_id: str
+    stage_id: str
+    stage_key: WorkspaceStageKey
+    status: str
+    review_type: str
+    draft_message_id: Optional[str] = None
+    participants: List[Dict[str, Any]] = Field(default_factory=list)
+    expert_findings: List[Dict[str, Any]] = Field(default_factory=list)
+    summary: Optional[str] = None
+    result: Dict[str, Any] = Field(default_factory=dict)
+    created_by: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+    @classmethod
+    def from_model(cls, review: WorkspaceStageReview):
+        participants: List[Dict[str, Any]] = []
+        if review.participants_json:
+            try:
+                raw = json.loads(review.participants_json)
+                participants = raw if isinstance(raw, list) else []
+            except json.JSONDecodeError:
+                participants = []
+
+        expert_findings: List[Dict[str, Any]] = []
+        if review.expert_findings_json:
+            try:
+                raw = json.loads(review.expert_findings_json)
+                expert_findings = raw if isinstance(raw, list) else []
+            except json.JSONDecodeError:
+                expert_findings = []
+
+        result: Dict[str, Any] = {}
+        if review.result_json:
+            try:
+                raw = json.loads(review.result_json)
+                result = raw if isinstance(raw, dict) else {}
+            except json.JSONDecodeError:
+                result = {}
+
+        return cls(
+            id=review.id,
+            workspace_id=review.workspace_id,
+            stage_id=review.stage_id,
+            stage_key=WorkspaceStageKey(review.stage_key),
+            status=review.status,
+            review_type=review.review_type,
+            draft_message_id=review.draft_message_id,
+            participants=participants,
+            expert_findings=expert_findings,
+            summary=review.summary,
+            result=result,
+            created_by=review.created_by,
+            created_at=review.created_at.isoformat() if review.created_at else None,
+            updated_at=review.updated_at.isoformat() if review.updated_at else None,
+        )
 
 
 class WorkspacePlanningSessionResponse(BaseModel):

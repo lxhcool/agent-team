@@ -109,6 +109,41 @@ async def _migrate_schema():
             logger.debug(f"Migration skipped (workspace_memories): {e}")
             await db.rollback()
 
+        try:
+            result = await db.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='workspace_stage_reviews'"))
+            exists = result.scalar_one_or_none()
+            if not exists:
+                await db.execute(text("""
+                    CREATE TABLE workspace_stage_reviews (
+                        id VARCHAR(36) PRIMARY KEY,
+                        workspace_id VARCHAR(36) NOT NULL,
+                        stage_id VARCHAR(36) NOT NULL,
+                        stage_key VARCHAR(50) NOT NULL,
+                        status VARCHAR(30) NOT NULL DEFAULT 'completed',
+                        review_type VARCHAR(50) NOT NULL DEFAULT 'expert_group',
+                        draft_message_id VARCHAR(36),
+                        participants_json TEXT,
+                        expert_findings_json TEXT,
+                        summary TEXT,
+                        result_json TEXT,
+                        created_by VARCHAR(36),
+                        created_at DATETIME,
+                        updated_at DATETIME
+                    )
+                """))
+                await db.execute(text("CREATE INDEX ix_workspace_stage_reviews_workspace_id ON workspace_stage_reviews (workspace_id)"))
+                await db.execute(text("CREATE INDEX ix_workspace_stage_reviews_stage_id ON workspace_stage_reviews (stage_id)"))
+                await db.execute(text("CREATE INDEX ix_workspace_stage_reviews_stage_key ON workspace_stage_reviews (stage_key)"))
+                await db.execute(text("CREATE INDEX ix_workspace_stage_reviews_status ON workspace_stage_reviews (status)"))
+                await db.execute(text("CREATE INDEX ix_workspace_stage_reviews_review_type ON workspace_stage_reviews (review_type)"))
+                await db.execute(text("CREATE INDEX ix_workspace_stage_reviews_draft_message_id ON workspace_stage_reviews (draft_message_id)"))
+                await db.execute(text("CREATE INDEX ix_workspace_stage_reviews_created_by ON workspace_stage_reviews (created_by)"))
+                await db.commit()
+                logger.info("Migration applied: created workspace_stage_reviews table")
+        except Exception as e:
+            logger.debug(f"Migration skipped (workspace_stage_reviews): {e}")
+            await db.rollback()
+
 
 async def get_db() -> AsyncSession:
     """Dependency for getting async database sessions."""

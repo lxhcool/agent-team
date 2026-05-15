@@ -218,6 +218,9 @@ class Workspace(Base):
     stages: Mapped[List["WorkspaceStage"]] = relationship(
         back_populates="workspace", cascade="all, delete-orphan", order_by="WorkspaceStage.order"
     )
+    stage_reviews: Mapped[List["WorkspaceStageReview"]] = relationship(
+        back_populates="workspace", cascade="all, delete-orphan", order_by="WorkspaceStageReview.created_at"
+    )
     memories: Mapped[List["WorkspaceMemory"]] = relationship(
         back_populates="workspace", cascade="all, delete-orphan", order_by="WorkspaceMemory.created_at"
     )
@@ -270,6 +273,9 @@ class WorkspaceStage(Base):
     messages: Mapped[List["WorkspaceStageMessage"]] = relationship(
         back_populates="stage", cascade="all, delete-orphan", order_by="WorkspaceStageMessage.created_at"
     )
+    reviews: Mapped[List["WorkspaceStageReview"]] = relationship(
+        back_populates="stage", cascade="all, delete-orphan", order_by="WorkspaceStageReview.created_at"
+    )
 
 
 class WorkspaceStageMessage(Base):
@@ -286,6 +292,33 @@ class WorkspaceStageMessage(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
     stage: Mapped["WorkspaceStage"] = relationship(back_populates="messages")
+
+
+class WorkspaceStageReview(Base):
+    """Expert-group review output for a workspace stage draft."""
+    __tablename__ = "workspace_stage_reviews"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    workspace_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("workspaces.id"), nullable=False, index=True
+    )
+    stage_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("workspace_stages.id"), nullable=False, index=True
+    )
+    stage_key: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="completed", index=True)
+    review_type: Mapped[str] = mapped_column(String(50), nullable=False, default="expert_group", index=True)
+    draft_message_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    participants_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    expert_findings_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    result_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+    workspace: Mapped["Workspace"] = relationship(back_populates="stage_reviews")
+    stage: Mapped["WorkspaceStage"] = relationship(back_populates="reviews")
 
 
 class WorkspaceMemory(Base):

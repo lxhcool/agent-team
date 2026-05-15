@@ -227,7 +227,7 @@ def build_memory_extraction_prompt(
 2. 不能把整段内容改写成摘要；要拆成一条条独立事实。
 3. 只保留来源文本里明确表达的事实，不要脑补，不要补推断。
 4. 同一个事实如果只是换说法，不要重复提取。
-5. topic 要短，像稳定的记忆键，例如“产品形态”“访问方式”“内容边界”“确认机制”。
+5. topic 要短，像稳定的记忆键；根据事实本身命名，不要套用固定栏目。
 6. memory_type 只能从下面这些值里选：
    product_definition, target_user, core_goal, constraint, process_rule, business_rule, capacity_rule, permission_rule, module_definition, page_structure, technical_decision, delivery_item
 7. scope 只能是 global 或 stage。

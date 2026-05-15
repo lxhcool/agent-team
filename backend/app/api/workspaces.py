@@ -32,6 +32,7 @@ from app.api.flow_schemas import (
     WorkspaceResponse,
     WorkspaceStageChatResponse,
     WorkspaceStageMessageResponse,
+    WorkspaceStageReviewResponse,
     WorkspaceStageResponse,
 )
 from app.api.authz import get_user_from_query_token
@@ -45,6 +46,7 @@ from app.models.models import (
     WorkspaceStage,
     WorkspaceStageKey,
     WorkspaceStageMessage,
+    WorkspaceStageReview,
     WorkspaceStageStatus,
     WorkspaceStatus,
 )
@@ -73,6 +75,13 @@ from app.services.flows.stage_state import (
     seed_stages as _seed_stages,
 )
 from app.services.flows.stage_generation import resolve_generation_model as _resolve_generation_model
+from app.services.flows.stage_reviews import (
+    EXPERT_REVIEW_STAGES,
+    StageReviewError,
+    build_review_revision_instruction as _build_review_revision_instruction,
+    create_queued_stage_review as _create_queued_stage_review,
+    run_stage_expert_review as _run_stage_expert_review,
+)
 from app.services.flows.stage_snapshots import with_stage_snapshot as _with_stage_snapshot
 
 router = APIRouter()
@@ -84,8 +93,8 @@ STAGE_DEFINITIONS = [
     (
         WorkspaceStageKey.REQUIREMENTS,
         "需求确认",
-        "只确认这是什么产品：基本使用或呈现方式怎么成立、哪些前提会影响后续骨架。",
-        ["产品定义", "基本使用方式", "主流程骨架", "结构性前提"],
+        "只确认这是什么产品、给谁用、最基本怎么成立；不提前设计功能、页面或实现方案。",
+        ["产品定义", "目标用户", "基本使用方式", "结构性前提"],
     ),
     (
         WorkspaceStageKey.PRODUCT,
@@ -144,6 +153,7 @@ async def _stream_with_fresh_session(
     user: User,
     force_finalize: bool = False,
     runtime_options: Optional[Dict[str, Any]] = None,
+    extra_instruction: Optional[str] = None,
 ):
     async def generator():
         async with async_session() as stream_db:
@@ -170,6 +180,7 @@ async def _stream_with_fresh_session(
                 serialize_stage_message_response=lambda item: WorkspaceStageMessageResponse.from_model(item, workspace.id).model_dump(mode="json"),
                 force_finalize=force_finalize,
                 runtime_options=runtime_options,
+                extra_instruction=extra_instruction,
             )
             async for event in inner:
                 yield event
@@ -682,6 +693,290 @@ async def get_workspace_stage_messages(
     )
 
 
+def _require_expert_review_stage(stage_key: WorkspaceStageKey) -> None:
+    if stage_key not in EXPERT_REVIEW_STAGES:
+        raise HTTPException(status_code=404, detail="当前阶段没有专业视角检查")
+
+
+@router.get("/workspaces/{workspace_id}/stages/{stage_key}/reviews", response_model=List[WorkspaceStageReviewResponse])
+async def list_workspace_stage_reviews(
+    workspace_id: str,
+    stage_key: WorkspaceStageKey,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    _require_expert_review_stage(stage_key)
+    await _get_accessible_workspace(db, workspace_id, user)
+    stages = await _get_stages(db, workspace_id)
+    stage = next((item for item in stages if item.stage_key == stage_key), None)
+    if not stage:
+        raise HTTPException(status_code=404, detail="Workspace stage not found")
+
+    result = await db.execute(
+        select(WorkspaceStageReview)
+        .where(
+            WorkspaceStageReview.workspace_id == workspace_id,
+            WorkspaceStageReview.stage_id == stage.id,
+        )
+        .order_by(WorkspaceStageReview.created_at.desc())
+    )
+    reviews = list(result.scalars().all())
+    return [WorkspaceStageReviewResponse.from_model(review) for review in reviews]
+
+
+async def _run_workspace_stage_review_task(
+    *,
+    review_id: str,
+    workspace_id: str,
+    stage_key: WorkspaceStageKey,
+    user_id: str,
+    runtime_options: Dict[str, Any],
+) -> None:
+    async with async_session() as session:
+        try:
+            user = await session.get(User, user_id)
+            workspace = await session.get(Workspace, workspace_id)
+            review = await session.get(WorkspaceStageReview, review_id)
+            if not user or not workspace or not review:
+                return
+
+            stages = await _get_stages(session, workspace_id)
+            stage = next((item for item in stages if item.stage_key == stage_key), None)
+            if not stage:
+                review.status = "failed"
+                review.summary = "专业视角检查失败：阶段不存在。"
+                await session.commit()
+                return
+
+            messages = await _get_stage_messages(session, stage.id)
+            await _run_stage_expert_review(
+                db=session,
+                user=user,
+                workspace=workspace,
+                stages=stages,
+                stage=stage,
+                messages=messages,
+                review=review,
+                runtime_options=runtime_options,
+                resolve_generation_model=_make_generation_resolver(runtime_options),
+            )
+        except Exception as exc:
+            logger.exception(
+                "workspace stage review task failed: review=%s workspace=%s stage=%s",
+                review_id,
+                workspace_id,
+                stage_key.value,
+            )
+            try:
+                if session.in_transaction():
+                    await session.rollback()
+                review = await session.get(WorkspaceStageReview, review_id)
+                if review and review.status != "superseded":
+                    review.status = "failed"
+                    review.summary = f"专业视角检查失败：{exc}"
+                    review.result_json = json.dumps(
+                        {
+                            "overall_judgment": "专业检查生成失败",
+                            "why": str(exc),
+                            "main_risks": [],
+                            "expert_conflicts": [],
+                            "suggested_supplements": ["请稍后重新生成专业视角检查，或检查模型配置。"],
+                            "focus_for_user": ["这次检查不可作为进入下一阶段的依据。"],
+                            "can_enter_next_stage": False,
+                            "user_confirmation_questions": [],
+                        },
+                        ensure_ascii=False,
+                    )
+                    await session.commit()
+            except Exception:
+                logger.exception("failed to persist review task failure: review=%s", review_id)
+
+
+async def _mark_stage_reviews_superseded(
+    db: AsyncSession,
+    *,
+    workspace_id: str,
+    stage_ids: List[str],
+    except_review_id: Optional[str] = None,
+) -> None:
+    if not stage_ids:
+        return
+    result = await db.execute(
+        select(WorkspaceStageReview).where(
+            WorkspaceStageReview.workspace_id == workspace_id,
+            WorkspaceStageReview.stage_id.in_(stage_ids),
+        )
+    )
+    for review in result.scalars().all():
+        if except_review_id and review.id == except_review_id:
+            continue
+        if review.status == "superseded":
+            continue
+        review.status = "superseded"
+
+
+@router.post("/workspaces/{workspace_id}/stages/{stage_key}/reviews", response_model=WorkspaceStageReviewResponse)
+async def create_workspace_stage_review(
+    workspace_id: str,
+    stage_key: WorkspaceStageKey,
+    req: Optional[StageRunSettingsRequest] = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    _require_expert_review_stage(stage_key)
+    workspace, member = await _get_accessible_workspace(db, workspace_id, user)
+    _require_editor(member)
+
+    stages = await _get_stages(db, workspace_id)
+    stage = next((item for item in stages if item.stage_key == stage_key), None)
+    if not stage:
+        raise HTTPException(status_code=404, detail="Workspace stage not found")
+    _require_stage_predecessors_approved(stages, stage)
+
+    runtime_options = _build_runtime_options(req.settings if req else None)
+    messages = await _get_stage_messages(db, stage.id)
+    try:
+        review = _create_queued_stage_review(
+            db=db,
+            user=user,
+            workspace=workspace,
+            stage=stage,
+            messages=messages,
+        )
+    except StageReviewError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    await db.commit()
+    await db.refresh(review)
+    asyncio.create_task(
+        _run_workspace_stage_review_task(
+            review_id=review.id,
+            workspace_id=workspace.id,
+            stage_key=stage.stage_key,
+            user_id=user.id,
+            runtime_options=runtime_options,
+        )
+    )
+    return WorkspaceStageReviewResponse.from_model(review)
+
+
+@router.post("/workspaces/{workspace_id}/stages/{stage_key}/reviews/{review_id}/apply", response_model=WorkspaceStageChatResponse)
+async def apply_workspace_stage_review(
+    workspace_id: str,
+    stage_key: WorkspaceStageKey,
+    review_id: str,
+    req: Optional[StageRunSettingsRequest] = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    _require_expert_review_stage(stage_key)
+    workspace, member = await _get_accessible_workspace(db, workspace_id, user)
+    _require_editor(member)
+
+    stages = await _get_stages(db, workspace_id)
+    stage = next((item for item in stages if item.stage_key == stage_key), None)
+    if not stage:
+        raise HTTPException(status_code=404, detail="Workspace stage not found")
+    _require_stage_predecessors_approved(stages, stage)
+    if stage.status == WorkspaceStageStatus.APPROVED:
+        raise HTTPException(status_code=400, detail="当前阶段已确认，请先发起调整，再应用专业检查")
+
+    review = await db.get(WorkspaceStageReview, review_id)
+    if not review or review.workspace_id != workspace_id or review.stage_id != stage.id:
+        raise HTTPException(status_code=404, detail="专业视角检查不存在")
+    if review.status in {"queued", "running"}:
+        raise HTTPException(status_code=400, detail="专业视角检查还在生成中，请稍后再应用")
+    if review.status == "failed":
+        raise HTTPException(status_code=400, detail="专业视角检查失败，不能用于修订方案")
+    if review.status == "superseded":
+        raise HTTPException(status_code=400, detail="专业视角检查基于旧版本，请重新检查后再应用")
+
+    runtime_options = _build_runtime_options(req.settings if req else None)
+    instruction = _build_review_revision_instruction(review)
+    await _append_stage_message(
+        db=db,
+        stage=stage,
+        role="user",
+        content=instruction,
+        kind="chat",
+    )
+    messages = await _get_stage_messages(db, stage.id)
+    await _generate_and_append_stage_reply(
+        db=db,
+        user=user,
+        workspace=workspace,
+        stages=stages,
+        stage=stage,
+        messages=messages,
+        extra_instruction="这轮是根据专业视角检查修订当前方案。请直接输出修订后的方案，不要只解释检查意见。",
+        resolve_generation_model=_make_generation_resolver(runtime_options),
+        runtime_options=runtime_options,
+        create_workspace_artifact=_create_workspace_artifact,
+        load_recommendation=_load_recommendation,
+        upsert_artifact_reference=_upsert_artifact_reference,
+    )
+
+    await _mark_stage_reviews_superseded(db, workspace_id=workspace_id, stage_ids=[stage.id], except_review_id=review.id)
+    await db.commit()
+    await db.refresh(stage)
+    messages = await _get_stage_messages(db, stage.id)
+    return WorkspaceStageChatResponse(
+        stage=WorkspaceStageResponse.from_model(stage),
+        messages=[WorkspaceStageMessageResponse.from_model(message, workspace.id) for message in messages],
+    )
+
+
+@router.post("/workspaces/{workspace_id}/stages/{stage_key}/reviews/{review_id}/apply-stream")
+async def apply_workspace_stage_review_stream(
+    workspace_id: str,
+    stage_key: WorkspaceStageKey,
+    review_id: str,
+    req: Optional[StageRunSettingsRequest] = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    _require_expert_review_stage(stage_key)
+    workspace, member = await _get_accessible_workspace(db, workspace_id, user)
+    _require_editor(member)
+
+    stages = await _get_stages(db, workspace_id)
+    stage = next((item for item in stages if item.stage_key == stage_key), None)
+    if not stage:
+        raise HTTPException(status_code=404, detail="Workspace stage not found")
+    _require_stage_predecessors_approved(stages, stage)
+    if stage.status == WorkspaceStageStatus.APPROVED:
+        raise HTTPException(status_code=400, detail="当前阶段已确认，请先发起调整，再应用专业检查")
+
+    review = await db.get(WorkspaceStageReview, review_id)
+    if not review or review.workspace_id != workspace_id or review.stage_id != stage.id:
+        raise HTTPException(status_code=404, detail="专业视角检查不存在")
+    if review.status in {"queued", "running"}:
+        raise HTTPException(status_code=400, detail="专业视角检查还在生成中，请稍后再应用")
+    if review.status == "failed":
+        raise HTTPException(status_code=400, detail="专业视角检查失败，不能用于修订方案")
+    if review.status == "superseded":
+        raise HTTPException(status_code=400, detail="专业视角检查基于旧版本，请重新检查后再应用")
+
+    runtime_options = _build_runtime_options(req.settings if req else None)
+    instruction = "\n\n".join(
+        [
+            _build_review_revision_instruction(review),
+            "这轮是根据专业视角检查修订当前方案。请直接输出修订后的方案，不要只解释检查意见。",
+        ]
+    )
+    await _mark_stage_reviews_superseded(db, workspace_id=workspace_id, stage_ids=[stage.id], except_review_id=review.id)
+    await db.commit()
+
+    generator = await _stream_with_fresh_session(
+        workspace_id=workspace_id,
+        stage_key=stage_key,
+        user=user,
+        runtime_options=runtime_options,
+        extra_instruction=instruction,
+    )
+    return EventSourceResponse(generator)
+
+
 @router.post("/workspaces/{workspace_id}/stages/{stage_key}/bootstrap-stream")
 async def bootstrap_workspace_stage_stream(
     workspace_id: str,
@@ -1040,6 +1335,8 @@ async def request_stage_revision(
             item.user_feedback = f"上游阶段「{stage.title}」已调整，本阶段需要重新确认。"
             await _reset_stage_generated_state(db, item)
 
+    affected_stage_ids = [item.id for item in stages if item.order >= target_order]
+    await _mark_stage_reviews_superseded(db, workspace_id=workspace_id, stage_ids=affected_stage_ids)
     workspace.current_stage = stage.stage_key
     await _supersede_stage_memories_from_order(
         db=db,
