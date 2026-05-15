@@ -57,7 +57,7 @@ const RISK_CONFIG: Record<string, { label: string; color: string; bg: string }> 
   high: { label: "高风险", color: "#dc2626", bg: "rgba(220,38,38,0.06)" },
 };
 
-const MODE_LABELS: Record<string, string> = { planning: "方案阶段", roundtable: "圆桌讨论" };
+const MODE_LABELS: Record<string, string> = { planning: "流程专家" };
 
 const emptyForm: AgentForm = {
   name: "", display_name: "", role: "custom", goal: "", system_prompt: "",
@@ -161,7 +161,7 @@ export default function AgentsPage() {
   };
 
   const deleteAgent = async (name: string) => {
-    if (!await confirm({ description: `确定删除 Agent "${name}"？`, variant: "destructive" })) return;
+    if (!await confirm({ description: `确定删除专家 "${name}"？`, variant: "destructive" })) return;
     try { await fetch(`/api/settings/agents/${name}`, { method: "DELETE" }); await fetchAgents(); } catch {}
   };
 
@@ -186,23 +186,23 @@ export default function AgentsPage() {
                 <div className="flex size-8 items-center justify-center rounded-lg bg-indigo-100 dark:bg-indigo-500/15">
                   <Bot size={16} className="text-indigo-600 dark:text-indigo-400" />
                 </div>
-                Agent 团队
+                专家库
               </h1>
-              <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-400">管理 AI Agent 团队成员</p>
+              <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-400">管理流程里可调用的专业角色</p>
             </div>
             <div className="flex items-center gap-3">
               <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 dark:bg-indigo-500/10 px-3 py-1.5 text-xs font-semibold text-indigo-600 dark:text-indigo-400">
                 <Bot size={11} />
-                {agents.length} 个 Agent
+                {agents.length} 个专家
               </span>
               <Button onClick={openCreate} size="sm" className="gap-1.5 cursor-pointer">
                 <Plus size={14} />
-                创建 Agent
+                创建专家
               </Button>
             </div>
           </div>
 
-          {/* Agent Grid */}
+          {/* Expert Grid */}
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {agents.map((agent) => {
               const risk = RISK_CONFIG[agent.risk_level] || RISK_CONFIG.low;
@@ -248,7 +248,7 @@ export default function AgentsPage() {
                           )}
                         </div>
 
-                        {/* Line 3: Skills */}
+                        {/* Line 3: Methods */}
                         <div className="mt-1.5 flex items-center gap-1 flex-wrap">
                           {agent.skills && agent.skills.slice(0, 1).map((s, i) => (
                             <span key={i} className="inline-flex items-center gap-0.5 rounded bg-amber-50 dark:bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-medium text-amber-600 dark:text-amber-400">
@@ -299,7 +299,7 @@ export default function AgentsPage() {
                   <Bot size={15} strokeWidth={1.5} />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="text-[13px] font-medium text-slate-400 dark:text-slate-500">还没有自定义 Agent</div>
+                  <div className="text-[13px] font-medium text-slate-400 dark:text-slate-500">还没有自定义专家</div>
                   <div className="text-[11px] text-slate-300 dark:text-slate-600 mt-1">点击上方按钮创建第一个</div>
                 </div>
               </div>
@@ -316,17 +316,17 @@ export default function AgentsPage() {
             <div className="hidden md:flex w-[360px] shrink-0 flex-col items-center justify-center overflow-y-auto bg-gradient-to-br from-indigo-600 via-indigo-700 to-violet-800 dark:from-indigo-800 dark:via-indigo-900 dark:to-violet-950 text-white p-8">
               <div className="flex flex-col items-center">
                 {avatarUrl(form.avatar_seed) ? (
-                  <img src={avatarUrl(form.avatar_seed)} alt={form.display_name || "Agent"} className="size-20 rounded-2xl bg-white/15 ring-1 ring-white/20 mb-5 object-cover" />
+                  <img src={avatarUrl(form.avatar_seed)} alt={form.display_name || "专家"} className="size-20 rounded-2xl bg-white/15 ring-1 ring-white/20 mb-5 object-cover" />
                 ) : (
                   <div className="flex size-20 items-center justify-center rounded-2xl bg-white/15 backdrop-blur-sm mb-5 ring-1 ring-white/20">
                     <Bot size={36} className="text-white" />
                   </div>
                 )}
                 <h3 className="text-lg font-semibold text-center mb-2">
-                  {form.display_name || "新 Agent"}
+                  {form.display_name || "新专家"}
                 </h3>
                 <p className="text-sm text-indigo-200 text-center leading-relaxed max-w-[240px]">
-                  {form.goal || "配置 Agent 的角色与能力，让它成为团队中的得力成员"}
+                  {form.goal || "配置专家的角色与方法，让它参与流程里的专业判断"}
                 </p>
 
                 {form.skills.length > 0 && (
@@ -351,7 +351,7 @@ export default function AgentsPage() {
                   <span className="font-medium">{RISK_CONFIG[form.risk_level]?.label || form.risk_level}</span>
                 </div>
                 <div className="flex items-center justify-between text-xs">
-                  <span className="text-indigo-200">参与模式</span>
+                  <span className="text-indigo-200">参与流程</span>
                   <span className="font-medium">{form.participation_modes.map((m) => MODE_LABELS[m] || m).join("、")}</span>
                 </div>
                 {form.model && (
@@ -369,14 +369,14 @@ export default function AgentsPage() {
               <div className="px-6 pt-5 pb-3 border-b border-slate-100 dark:border-slate-800/60">
                 <div className="flex items-center justify-between">
                   <DialogTitle className="flex items-center gap-2 text-base">
-                    {dialogMode === "create" ? "创建自定义 Agent" : `编辑 ${form.display_name}`}
+                    {dialogMode === "create" ? "创建自定义专家" : `编辑 ${form.display_name}`}
                   </DialogTitle>
                   <Button variant="ghost" size="icon-sm" onClick={() => setDialogOpen(false)} className="cursor-pointer text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 -mr-1.5">
                     <X size={16} />
                   </Button>
                 </div>
                 <DialogDescription className="text-slate-500 dark:text-slate-400 mt-1">
-                  {dialogMode === "create" ? "配置一个新的 Agent 团队成员" : "修改 Agent 的配置信息"}
+                  {dialogMode === "create" ? "配置一个新的流程专家" : "修改专家的配置信息"}
                 </DialogDescription>
               </div>
 
@@ -389,7 +389,7 @@ export default function AgentsPage() {
                     <input
                       type="text" value={form.name}
                       onChange={(e) => dialogMode === "create" && setForm({ ...form, name: e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, "") })}
-                      placeholder="my-agent" disabled={dialogMode === "edit"}
+                      placeholder="my-expert" disabled={dialogMode === "edit"}
                       className="h-9 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 px-3 text-sm text-slate-700 dark:text-slate-200 placeholder:text-slate-400 outline-none focus:border-indigo-300 dark:focus:border-indigo-500/40 focus:ring-2 focus:ring-indigo-500/10 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
                     />
                   </div>
@@ -398,7 +398,7 @@ export default function AgentsPage() {
                     <input
                       type="text" value={form.display_name}
                       onChange={(e) => setForm({ ...form, display_name: e.target.value })}
-                      placeholder="我的 Agent"
+                      placeholder="我的专家"
                       className="h-9 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 px-3 text-sm text-slate-700 dark:text-slate-200 placeholder:text-slate-400 outline-none focus:border-indigo-300 dark:focus:border-indigo-500/40 focus:ring-2 focus:ring-indigo-500/10 transition-all duration-200"
                     />
                   </div>
@@ -444,14 +444,14 @@ export default function AgentsPage() {
                   <input
                     type="text" value={form.goal}
                     onChange={(e) => setForm({ ...form, goal: e.target.value })}
-                    placeholder="负责什么工作？"
+                    placeholder="这个专家负责什么判断？"
                     className="h-9 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 px-3 text-sm text-slate-700 dark:text-slate-200 placeholder:text-slate-400 outline-none focus:border-indigo-300 dark:focus:border-indigo-500/40 focus:ring-2 focus:ring-indigo-500/10 transition-all duration-200"
                   />
                 </div>
 
                 {/* System Prompt */}
                 <div>
-                  <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">System Prompt</label>
+                  <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">专家工作指令</label>
                   <textarea
                     value={form.system_prompt}
                     onChange={(e) => setForm({ ...form, system_prompt: e.target.value })}
@@ -484,9 +484,9 @@ export default function AgentsPage() {
 
                 {/* Participation Modes */}
                 <div>
-                  <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">参与模式</label>
+                  <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">参与流程</label>
                   <div className="flex gap-2">
-                    {(["planning", "roundtable"] as const).map((mode) => {
+                    {(["planning"] as const).map((mode) => {
                       const active = form.participation_modes.includes(mode);
                       return (
                         <button key={mode} type="button" onClick={() => toggleMode(mode)}
@@ -502,11 +502,11 @@ export default function AgentsPage() {
                   </div>
                 </div>
 
-                {/* Skills */}
+                {/* Methods */}
                 <div>
-                  <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">配备 Skill</label>
+                  <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">配备方法</label>
                   {skills.length === 0 ? (
-                    <p className="text-xs text-slate-400 dark:text-slate-500">暂无可选 Skill</p>
+                    <p className="text-xs text-slate-400 dark:text-slate-500">暂无可选方法</p>
                   ) : (
                     <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/30 p-2.5">
                       {skills.map((skill) => {
@@ -543,7 +543,7 @@ export default function AgentsPage() {
                   <Button variant="outline" size="sm" onClick={() => setDialogOpen(false)} className="cursor-pointer h-8">取消</Button>
                   <Button size="sm" onClick={handleSave} disabled={saving || (dialogMode === "create" && (!form.name || !form.display_name || !form.system_prompt))} className="gap-1.5 cursor-pointer h-8">
                     {saving ? <Loader2 size={13} className="animate-spin" /> : dialogMode === "create" ? <Plus size={13} /> : null}
-                    {saving ? "保存中..." : dialogMode === "create" ? "创建 Agent" : "保存修改"}
+                    {saving ? "保存中..." : dialogMode === "create" ? "创建专家" : "保存修改"}
                   </Button>
                 </div>
               </div>

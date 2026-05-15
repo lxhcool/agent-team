@@ -16,8 +16,8 @@ const NAV = [
 ];
 
 const SETTINGS_NAV = [
-  { href: "/settings/agents", label: "Agent 团队", icon: Users },
-  { href: "/settings/skills", label: "Skill 管理", icon: Wrench },
+  { href: "/settings/agents", label: "专家库", icon: Users },
+  { href: "/settings/skills", label: "方法库", icon: Wrench },
   { href: "/settings/models", label: "模型设置", icon: Settings },
   { href: "/usage", label: "用量统计", icon: BarChart3 },
 ];

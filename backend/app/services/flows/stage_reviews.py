@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.llm.router import LLMMessage, llm_router
 from app.models.models import User, Workspace, WorkspaceStage, WorkspaceStageKey, WorkspaceStageMessage, WorkspaceStageReview
+from app.services.flows.expert_assets import STAGE_REVIEW_CONFIGS
 
 logger = logging.getLogger(__name__)
 
@@ -29,97 +30,6 @@ REVIEW_STATUS_RUNNING = "running"
 REVIEW_STATUS_PARTIAL = "partial"
 REVIEW_STATUS_COMPLETED = "completed"
 REVIEW_STATUS_FAILED = "failed"
-
-PRODUCT_REVIEW_EXPERTS: List[Dict[str, str]] = [
-    {
-        "agent_id": "product-structure-reviewer",
-        "agent_name": "产品结构专家",
-        "expertise": "功能模块、模块关系、页面结构、主流程闭环",
-        "focus": "只判断方案骨架是否清楚，模块是否遗漏或重复，主流程是否能支撑用户完成核心任务。",
-    },
-    {
-        "agent_id": "ux-clarity-reviewer",
-        "agent_name": "体验与新手理解专家",
-        "expertise": "用户路径、信息层级、可理解性、确认成本",
-        "focus": "只判断新手用户是否容易理解方案、是否存在跳步、含混表达或确认成本过高。",
-    },
-    {
-        "agent_id": "technical-feasibility-reviewer",
-        "agent_name": "落地风险专家",
-        "expertise": "后续规则与开发会遇到的结构性风险",
-        "focus": "只指出会影响后续细节确认或开发方案的风险，不提前写技术方案。",
-    },
-]
-
-UI_DIRECTION_REVIEW_EXPERTS: List[Dict[str, str]] = [
-    {
-        "agent_id": "business-rule-reviewer",
-        "agent_name": "业务规则专家",
-        "expertise": "角色权限、业务规则、数据口径、约束一致性",
-        "focus": "只判断细节规则是否足够明确，是否存在口径冲突、角色边界不清或关键规则缺失。",
-    },
-    {
-        "agent_id": "interaction-state-reviewer",
-        "agent_name": "交互状态专家",
-        "expertise": "状态流转、操作反馈、前后台处理路径、用户确认成本",
-        "focus": "只判断用户和后台在关键状态下怎么走是否清楚，是否存在状态跳转、反馈或处理路径缺口。",
-    },
-    {
-        "agent_id": "edge-case-reviewer",
-        "agent_name": "异常边界专家",
-        "expertise": "异常场景、边界条件、失败处理、冲突处理",
-        "focus": "只指出会影响后续开发方案的边界问题，不提前写接口、字段或技术实现。",
-    },
-]
-
-TECHNICAL_REVIEW_EXPERTS: List[Dict[str, str]] = [
-    {
-        "agent_id": "architecture-reviewer",
-        "agent_name": "架构专家",
-        "expertise": "模块拆分、职责边界、实现路径、系统复杂度",
-        "focus": "只判断开发方案的模块边界和实现路径是否清楚，是否存在职责混乱或过度复杂。",
-    },
-    {
-        "agent_id": "data-api-reviewer",
-        "agent_name": "数据与接口专家",
-        "expertise": "数据模型、接口边界、状态字段、读写关系",
-        "focus": "只判断数据和接口组织是否能支撑已确认规则，不要求展开完整字段清单或代码级实现。",
-    },
-    {
-        "agent_id": "engineering-risk-reviewer",
-        "agent_name": "工程风险专家",
-        "expertise": "依赖风险、实现顺序、测试风险、交付风险",
-        "focus": "只指出会影响开发落地和交付验证的风险，并给出可执行的补强方向。",
-    },
-]
-
-STAGE_REVIEW_CONFIGS: Dict[WorkspaceStageKey, Dict[str, Any]] = {
-    WorkspaceStageKey.PRODUCT: {
-        "stage_name": "方案设计",
-        "stage_goal": "方案设计阶段：只审查功能模块、模块关系、页面结构和主流程骨架。",
-        "review_target": "方案设计",
-        "boundary": "不要审查需求确认是否完整；不要提前生成权限细则、字段清单、接口设计、数据库设计或完整技术方案。",
-        "revision_boundary": "仍然只写方案设计阶段内容，不展开规则细节、字段、接口、数据库或技术实现。",
-        "experts": PRODUCT_REVIEW_EXPERTS,
-    },
-    WorkspaceStageKey.UI_DIRECTION: {
-        "stage_name": "细节确认",
-        "stage_goal": "细节确认阶段：只审查业务规则、角色边界、状态流转、异常场景和数据口径。",
-        "review_target": "细节确认",
-        "boundary": "不要重新设计功能模块或页面结构；不要提前生成技术架构、接口实现、数据库设计或代码方案。",
-        "revision_boundary": "仍然只写细节确认阶段内容，不展开技术架构、接口实现、数据库设计或代码方案。",
-        "experts": UI_DIRECTION_REVIEW_EXPERTS,
-    },
-    WorkspaceStageKey.TECHNICAL: {
-        "stage_name": "开发方案",
-        "stage_goal": "开发方案阶段：只审查实现路径、模块拆分、接口数据组织、依赖风险和测试交付风险。",
-        "review_target": "开发方案",
-        "boundary": "不要回到产品创意或业务规则讨论；不要输出具体代码，也不要替代后续开发执行。",
-        "revision_boundary": "仍然只写开发方案阶段内容，不输出具体代码或开发执行过程。",
-        "experts": TECHNICAL_REVIEW_EXPERTS,
-    },
-}
-
 
 def _stage_review_config(stage_key: WorkspaceStageKey) -> Dict[str, Any]:
     config = STAGE_REVIEW_CONFIGS.get(stage_key)
@@ -169,7 +79,8 @@ def _normalize_bool(value: Any) -> bool:
 
 def _fallback_expert_conclusion(parsed: Dict[str, Any], content: str) -> str:
     conclusion = str(parsed.get("conclusion") or "").strip()
-    if conclusion:
+    vague_conclusions = {"未形成明确结论", "暂无明确结论", "无明确结论", "需要进一步明确"}
+    if conclusion and conclusion not in vague_conclusions:
         return conclusion
 
     issues = _normalize_string_list(parsed.get("issues"), 3)
@@ -267,13 +178,14 @@ def _build_review_context(
 
 
 def _expert_prompt(*, expert: Dict[str, str], context: Dict[str, str]) -> str:
+    expert_instruction = _compact_text(str(expert.get("system_prompt") or expert.get("focus") or ""), 1800)
     return f"""
 你是「{expert["agent_name"]}」。你的专长：{expert["expertise"]}。
 
 只从你的专业视角检查「{context["review_target"]}」草稿，不要重写草稿，不要替用户做新方案。
 
-你的检查范围：
-{expert["focus"]}
+你的工作指令：
+{expert_instruction}
 
 审查上下文：
 项目一句话：
@@ -299,6 +211,7 @@ def _expert_prompt(*, expert: Dict[str, str], context: Dict[str, str]) -> str:
 2. 每个数组最多 3 条。
 3. 如果没有真实阻塞，不要硬写 blocking=true。
 4. 问题必须具体说明为什么会影响后续确认。
+5. 如果只有建议没有阻塞，conclusion 要明确写“可继续推进”或“可推进但建议补充”，不要写“未形成明确结论”。
 
 JSON：
 {{
@@ -333,7 +246,7 @@ async def _call_expert(
             model=model,
             provider_name=provider,
             fallback_chain=fallback_chain,
-            max_tokens=520,
+            max_tokens=760,
             temperature=0.15,
             session_id=workspace.id,
             session_type="workspace",

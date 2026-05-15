@@ -10,6 +10,7 @@ import {
 import { useConfirm } from "@/components/ui/confirm-dialog";
 
 type Skill = {
+  id: string;
   name: string;
   display_name: string;
   description: string | null;
@@ -40,7 +41,7 @@ export default function SkillsPage() {
   // Dialog state
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogMode, setDialogMode] = useState<"create" | "edit">("create");
-  const [editingName, setEditingName] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<SkillForm>(emptyForm);
   const [saving, setSaving] = useState(false);
 
@@ -53,7 +54,7 @@ export default function SkillsPage() {
   const openCreate = () => {
     setForm(emptyForm);
     setDialogMode("create");
-    setEditingName(null);
+    setEditingId(null);
     setDialogOpen(true);
   };
 
@@ -67,12 +68,13 @@ export default function SkillsPage() {
       content: skill.content || "",
     });
     setDialogMode("edit");
-    setEditingName(skill.name);
+    setEditingId(skill.id);
     setDialogOpen(true);
   };
 
   const handleSave = async () => {
     if (dialogMode === "create" && (!form.name || !form.display_name || !form.content)) return;
+    if (dialogMode === "edit" && !editingId) return;
     setSaving(true);
     try {
       if (dialogMode === "create") {
@@ -80,7 +82,7 @@ export default function SkillsPage() {
           method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form),
         });
       } else {
-        await fetch(`/api/settings/skills/${editingName}`, {
+        await fetch(`/api/settings/skills/${editingId}`, {
           method: "PUT", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ display_name: form.display_name, description: form.description, content: form.content }),
         });
@@ -90,9 +92,22 @@ export default function SkillsPage() {
     } catch {} finally { setSaving(false); }
   };
 
-  const deleteSkill = async (name: string) => {
-    if (!await confirm({ description: `确定删除 Skill "${name}"？`, variant: "destructive" })) return;
-    try { await fetch(`/api/settings/skills/${name}`, { method: "DELETE" }); await fetchSkills(); } catch {}
+  const deleteSkill = async (skill: Skill) => {
+    if (skill.source_type === "builtin") return;
+    const label = skill.display_name || skill.name;
+    if (!await confirm({ description: `确定删除方法 "${label}"？`, variant: "destructive" })) return;
+    try { await fetch(`/api/settings/skills/${skill.id}`, { method: "DELETE" }); await fetchSkills(); } catch {}
+  };
+
+  const deleteEditingSkill = async () => {
+    const skill = skills.find((item) => item.id === editingId);
+    if (!skill) return;
+    if (!await confirm({ description: `确定删除方法 "${skill.display_name || skill.name}"？`, variant: "destructive" })) return;
+    try {
+      await fetch(`/api/settings/skills/${skill.id}`, { method: "DELETE" });
+      setDialogOpen(false);
+      await fetchSkills();
+    } catch {}
   };
 
   if (loading) {
@@ -116,23 +131,23 @@ export default function SkillsPage() {
                 <div className="flex size-8 items-center justify-center rounded-lg bg-violet-100 dark:bg-violet-500/15">
                   <Zap size={16} className="text-violet-600 dark:text-violet-400" />
                 </div>
-                Skill 管理
+                方法库
               </h1>
-              <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-400">管理 Agent 可用的 Skill</p>
+              <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-400">管理专家可用的专业方法</p>
             </div>
             <div className="flex items-center gap-3">
               <span className="inline-flex items-center gap-1.5 rounded-full bg-violet-50 dark:bg-violet-500/10 px-3 py-1.5 text-xs font-semibold text-violet-600 dark:text-violet-400">
                 <Zap size={11} />
-                {skills.length} 个 Skill
+                {skills.length} 个方法
               </span>
               <Button onClick={openCreate} size="sm" className="gap-1.5 cursor-pointer">
                 <Plus size={14} />
-                创建 Skill
+                创建方法
               </Button>
             </div>
           </div>
 
-          {/* Skill Grid */}
+          {/* Method Grid */}
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {skills.map((skill) => {
               const isBuiltin = skill.source_type === "builtin";
@@ -185,7 +200,7 @@ export default function SkillsPage() {
                       className="inline-flex items-center gap-1 rounded-md bg-violet-50 dark:bg-violet-500/10 hover:bg-violet-100 dark:hover:bg-violet-500/20 px-2 py-1 text-[10px] font-medium text-violet-600 dark:text-violet-400 transition-colors duration-200 cursor-pointer">
                       <Pencil size={10} />编辑
                     </button>
-                    <button type="button" onClick={() => deleteSkill(skill.name)}
+                    <button type="button" onClick={() => deleteSkill(skill)}
                       className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium transition-colors duration-200 cursor-pointer ${
                         isBuiltin
                           ? "bg-slate-50 dark:bg-slate-800 text-slate-300 dark:text-slate-600 cursor-not-allowed"
@@ -206,7 +221,7 @@ export default function SkillsPage() {
                   <Zap size={15} strokeWidth={1.5} />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="text-[13px] font-medium text-slate-400 dark:text-slate-500">还没有 Skill</div>
+                  <div className="text-[13px] font-medium text-slate-400 dark:text-slate-500">还没有自定义方法</div>
                   <div className="text-[11px] text-slate-300 dark:text-slate-600 mt-1">点击上方按钮创建第一个</div>
                 </div>
               </div>
@@ -226,10 +241,10 @@ export default function SkillsPage() {
                   <Zap size={36} className="text-white" />
                 </div>
                 <h3 className="text-lg font-semibold text-center mb-2">
-                  {form.display_name || "新 Skill"}
+                  {form.display_name || "新方法"}
                 </h3>
                 <p className="text-sm text-violet-100 text-center leading-relaxed max-w-[240px]">
-                  {form.description || "配置 Skill 的名称与能力，让 Agent 获得新的技能"}
+                  {form.description || "配置方法的适用场景与工作规则，让专家获得更稳定的判断方式"}
                 </p>
 
                 {form.content && (
@@ -262,14 +277,14 @@ export default function SkillsPage() {
               <div className="px-6 pt-5 pb-3 border-b border-slate-100 dark:border-slate-800/60">
                 <div className="flex items-center justify-between">
                   <DialogTitle className="flex items-center gap-2 text-base">
-                    {dialogMode === "create" ? "创建自定义 Skill" : `编辑 ${form.display_name}`}
+                    {dialogMode === "create" ? "创建自定义方法" : `编辑 ${form.display_name}`}
                   </DialogTitle>
                   <Button variant="ghost" size="icon-sm" onClick={() => setDialogOpen(false)} className="cursor-pointer text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 -mr-1.5">
                     <X size={16} />
                   </Button>
                 </div>
                 <DialogDescription className="text-slate-500 dark:text-slate-400 mt-1">
-                  {dialogMode === "create" ? "配置一个新的 Skill" : "修改 Skill 的配置信息"}
+                  {dialogMode === "create" ? "配置一个新的专业方法" : "修改方法的配置信息"}
                 </DialogDescription>
               </div>
 
@@ -282,7 +297,7 @@ export default function SkillsPage() {
                     <input
                       type="text" value={form.name}
                       onChange={(e) => dialogMode === "create" && setForm({ ...form, name: e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, "") })}
-                      placeholder="my-skill" disabled={dialogMode === "edit"}
+                      placeholder="my-method" disabled={dialogMode === "edit"}
                       className="h-9 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 px-3 text-sm text-slate-700 dark:text-slate-200 placeholder:text-slate-400 outline-none focus:border-violet-300 dark:focus:border-violet-500/40 focus:ring-2 focus:ring-violet-500/10 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
                     />
                   </div>
@@ -291,7 +306,7 @@ export default function SkillsPage() {
                     <input
                       type="text" value={form.display_name}
                       onChange={(e) => setForm({ ...form, display_name: e.target.value })}
-                      placeholder="我的 Skill"
+                      placeholder="我的方法"
                       className="h-9 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 px-3 text-sm text-slate-700 dark:text-slate-200 placeholder:text-slate-400 outline-none focus:border-violet-300 dark:focus:border-violet-500/40 focus:ring-2 focus:ring-violet-500/10 transition-all duration-200"
                     />
                   </div>
@@ -303,7 +318,7 @@ export default function SkillsPage() {
                   <input
                     type="text" value={form.description}
                     onChange={(e) => setForm({ ...form, description: e.target.value })}
-                    placeholder="描述此 Skill 的用途"
+                    placeholder="描述这个方法适合解决什么问题"
                     className="h-9 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 px-3 text-sm text-slate-700 dark:text-slate-200 placeholder:text-slate-400 outline-none focus:border-violet-300 dark:focus:border-violet-500/40 focus:ring-2 focus:ring-violet-500/10 transition-all duration-200"
                   />
                 </div>
@@ -335,11 +350,11 @@ export default function SkillsPage() {
 
                 {/* Content / System Prompt */}
                 <div>
-                  <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">系统提示词</label>
+                  <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">方法规则</label>
                   <textarea
                     value={form.content}
                     onChange={(e) => setForm({ ...form, content: e.target.value })}
-                    rows={10} placeholder="你是一个专门负责..."
+                    rows={10} placeholder="描述这个方法如何影响专家判断..."
                     className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 px-3 py-2 text-sm text-slate-700 dark:text-slate-200 placeholder:text-slate-400 outline-none focus:border-violet-300 dark:focus:border-violet-500/40 focus:ring-2 focus:ring-violet-500/10 resize-y font-mono transition-all duration-200"
                   />
                 </div>
@@ -348,9 +363,9 @@ export default function SkillsPage() {
               {/* Footer */}
               <div className="px-6 py-4 border-t border-slate-100 dark:border-slate-800/60 flex items-center justify-between bg-slate-50/50 dark:bg-slate-900/50">
                 <div className="flex items-center gap-2">
-                  <Button variant="outline" size="sm" onClick={() => { deleteSkill(editingName!); setDialogOpen(false); }}
+                  <Button variant="outline" size="sm" onClick={deleteEditingSkill}
                     className={`gap-1.5 cursor-pointer h-8 ${
-                      dialogMode === "edit" && editingName
+                      dialogMode === "edit" && editingId
                         ? "text-red-600 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-500/10 border-red-200 dark:border-red-500/30"
                         : "opacity-0 pointer-events-none"
                     }`}>
@@ -361,7 +376,7 @@ export default function SkillsPage() {
                   <Button variant="outline" size="sm" onClick={() => setDialogOpen(false)} className="cursor-pointer h-8">取消</Button>
                   <Button size="sm" onClick={handleSave} disabled={saving || (dialogMode === "create" && (!form.name || !form.display_name || !form.content))} className="gap-1.5 cursor-pointer h-8">
                     {saving ? <Loader2 size={13} className="animate-spin" /> : dialogMode === "create" ? <Plus size={13} /> : null}
-                    {saving ? "保存中..." : dialogMode === "create" ? "创建 Skill" : "保存修改"}
+                    {saving ? "保存中..." : dialogMode === "create" ? "创建方法" : "保存修改"}
                   </Button>
                 </div>
               </div>

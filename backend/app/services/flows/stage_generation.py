@@ -121,7 +121,7 @@ def build_stage_skill_context(
         prompt = skill_registry.get_skill_prompt(skill_name)
         if not prompt:
             continue
-        blocks.append(prompt.strip()[:350])
+        blocks.append(prompt.strip()[:1400])
     if not blocks:
         return ""
     return "\n\n".join(block for block in blocks[:2] if block)

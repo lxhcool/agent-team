@@ -53,8 +53,8 @@ Team Agent 不负责写代码，也不负责本地执行开发任务。
 | 工作区列表 | `/workspaces` | 查看项目与当前阶段 |
 | 工作区详情 | `/workspaces/[id]` | 分阶段推进、修订、确认、查看产物 |
 | 模型设置 | `/settings/models` | Provider、API Key、默认模型配置 |
-| Agent 管理 | `/settings/agents` | 交付型 Agent 模板管理 |
-| Skill 管理 | `/settings/skills` | Skill 管理 |
+| 专家库 | `/settings/agents` | 管理流程可调用的专业角色 |
+| 方法库 | `/settings/skills` | 管理专家可使用的专业方法 |
 | 用量统计 | `/usage` | 模型调用与费用统计 |
 
 ## 快速开始

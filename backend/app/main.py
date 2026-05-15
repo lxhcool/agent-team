@@ -21,7 +21,6 @@ from app.api import (
     usage,
     security,
     skills,
-    roundtable,
     observability,
     tools,
     auth,
@@ -51,7 +50,17 @@ async def lifespan(app: FastAPI):
     await skill_registry.load_skills()
     # Register built-in agents in heartbeat
     from app.services.heartbeat import heartbeat_service
-    for agent_name in ["orchestrator", "requirements-analyst", "product-designer", "reviewer", "technical-architect"]:
+    for agent_name in [
+        "product-structure-reviewer",
+        "ux-clarity-reviewer",
+        "technical-feasibility-reviewer",
+        "business-rule-reviewer",
+        "interaction-state-reviewer",
+        "edge-case-reviewer",
+        "architecture-reviewer",
+        "data-api-reviewer",
+        "engineering-risk-reviewer",
+    ]:
         try:
             await heartbeat_service.register(agent_name, agent_type="server")
         except Exception as exc:
@@ -105,6 +114,5 @@ app.include_router(artifacts.router, prefix="/api", tags=["artifacts"])
 app.include_router(usage.router, prefix="/api", tags=["usage"])
 app.include_router(security.router, prefix="/api/settings", tags=["security"])
 app.include_router(skills.router, prefix="/api/settings", tags=["skills"])
-app.include_router(roundtable.router, prefix="/api", tags=["roundtable"])
 app.include_router(observability.router, prefix="/api", tags=["observability"])
 app.include_router(tools.router, prefix="/api", tags=["tools"])
