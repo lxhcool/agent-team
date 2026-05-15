@@ -61,6 +61,29 @@ def should_discuss_stage_conclusion(finalize_intent: str) -> bool:
     return finalize_intent in FINALIZE_INTENTS
 
 
+def infer_finalize_intent_locally(latest_user_message: str) -> str:
+    """Catch obvious short user commands before asking the model."""
+    text = re.sub(r"\s+", "", (latest_user_message or "").strip().lower())
+    if not text:
+        return "unknown"
+
+    has_document_target = any(token in text for token in ("文档", "结论", "定稿", "总结"))
+    has_document_action = any(token in text for token in ("给", "出", "生成", "整理", "汇总", "定", "可以", "直接"))
+    describes_document_content = any(token in text for token in ("文档里", "文档中", "文档要", "文档需要", "结论里", "总结里"))
+    if has_document_target and has_document_action and not describes_document_content and len(text) <= 36:
+        return "explicit_finalize_request"
+
+    has_forward_target = any(token in text for token in ("下一阶段", "下个阶段", "后续阶段", "继续推进", "往下走"))
+    has_forward_action = any(token in text for token in ("进入", "继续", "可以", "直接", "推进", "开始"))
+    if has_forward_target and has_forward_action and len(text) <= 36:
+        return "explicit_finalize_request"
+
+    if re.fullmatch(r"(ok|okay|好|好的|可以|可以了|行|行了|嗯|嗯嗯|没问题|就这样|确认|继续|下一步|往下|对|是的)[。.!！]*", text):
+        return "closure_signal"
+
+    return "unknown"
+
+
 def build_new_information_chat_instruction() -> str:
     return """
 先判断用户最新消息是在追问解释、纠正前文、补充需求，还是要求继续推进。
@@ -624,6 +647,10 @@ async def assess_latest_user_message_finalize_intent(
 
     if not latest_user_message:
         return "unknown"
+
+    local_intent = infer_finalize_intent_locally(latest_user_message)
+    if local_intent != "unknown":
+        return local_intent
 
     model, provider, fallback_chain = await resolve_generation_model(db, user)
     if not model or not provider:
